@@ -1,0 +1,55 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Чистое C++-ядро: быстрые тесты с санитайзерами (без JUCE).
+  core-tests-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: FM engine tests (ASan+UBSan)
+        run: |
+          g++ -std=c++17 -O1 -g -Wall -Wextra -fsanitize=address,undefined -ISource \
+              tests/test_fm.cpp Source/Engine/FmBand.cpp -o fm_tests
+          ./fm_tests
+      - name: FM engine tests (Release, CPU budget)
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra -ISource tests/test_fm.cpp Source/Engine/FmBand.cpp -o fm_tests_rel
+          ./fm_tests_rel
+      - name: Player tests (ASan+UBSan)
+        run: |
+          g++ -std=c++17 -O1 -g -Wall -Wextra -fsanitize=address,undefined -ISource \
+              tests/test_player.cpp Source/Stations/StationPrep.cpp -o player_tests
+          ./player_tests
+      - name: Render demo
+        run: |
+          g++ -std=c++17 -O2 -ISource tests/render_demo.cpp Source/Engine/FmBand.cpp -o render_demo
+          ./render_demo fm_demo.wav
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FM-RX-demo-wav
+          path: fm_demo.wav
+
+  # Windows x64 VST3 (JUCE подтягивается через FetchContent).
+  windows-vst3:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+      - name: Build (Release)
+        run: cmake --build build --config Release --parallel
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: List VST3 output
+        shell: pwsh
+        run: Get-ChildItem -Recurse build -Filter *.vst3 | Select-Object FullName
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FM-RX-vst3-win-x64
+          path: "build/FmRx_artefacts/Release/VST3/FM RX.vst3"
+          if-no-files-found: error
