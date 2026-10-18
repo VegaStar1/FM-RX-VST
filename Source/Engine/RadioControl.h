@@ -156,6 +156,15 @@ namespace fmrx
             }
         }
 
+        // Аудиопоток: станцию запускают с начала вручную (редактор) - она играет, даже если стояла на паузе.
+        void requestPlay(int i) noexcept
+        {
+            auto& s = slots_[(size_t) i];
+            if (! s.known) return;
+            s.state = Slot::Playing; s.needLeave = false; s.restartPending = false;
+            publish();
+        }
+
         // --- результаты для аудиопотока ---
         float tuneTarget() const noexcept { return target_; }
         Slot slotState(int i) const noexcept { return slots_[(size_t) i].state; }

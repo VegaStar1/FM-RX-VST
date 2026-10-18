@@ -30,7 +30,7 @@ int main()
     bool firstSample = true;
     for (int b = 0; b < 300; ++b)        // 3.2 с: два прохода через стык
     {
-        p.render(buf.get(), oL.data(), oR.data(), 512, true);
+        p.render(buf.get(), StationRegion {}, oL.data(), oR.data(), 512, true);
         for (int i = 0; i < 512; ++i)
         {
             if (! firstSample && b > 2) maxJump = std::max(maxJump, std::fabs(oL[i] - prev));
@@ -43,11 +43,11 @@ int main()
     CHECK(maxJump < sineStep * 2.0f, "loop seam is smooth");
 
     // Пустой слот - тишина; новый буфер - мягкое появление с начала.
-    p.render(nullptr, oL.data(), oR.data(), 512, true);
+    p.render(nullptr, StationRegion {}, oL.data(), oR.data(), 512, true);
     bool silent = true;
     for (float v : oL) silent = silent && v == 0.f;
     CHECK(silent, "null buffer renders silence");
-    p.render(buf.get(), oL.data(), oR.data(), 64, true);
+    p.render(buf.get(), StationRegion {}, oL.data(), oR.data(), 64, true);
     CHECK(std::fabs(oL[0]) < 1e-3f, "fade-in after switching buffers");
 
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);

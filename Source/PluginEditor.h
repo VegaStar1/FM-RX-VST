@@ -2,6 +2,7 @@
 #include "PluginProcessor.h"
 #include "UI/AppSettings.h"
 #include "UI/SettingsPanel.h"
+#include "UI/StationEditor.h"
 #include "UI/StationRow.h"
 #include "UI/Strings.h"
 #include "UI/Theme.h"
@@ -20,6 +21,8 @@ namespace fmrx
 
         // Для консольной проверки (снимки UI).
         void openSettings(bool open) { settings_.setVisible(open); if (open) settings_.toFront(false); }
+        void openStationEditor(int slot);
+        void closeStationEditor();
 
     private:
         struct Knob
@@ -48,6 +51,7 @@ namespace fmrx
         ui::FmLookAndFeel lnf_;
         ui::TunerDisplay tuner_;
         juce::OwnedArray<ui::StationRow> rows_;
+        ui::StationEditor stationEditor_;
 
         // шапка
         juce::TextButton presetPrev_, presetName_, presetNext_, afc_, gear_;
@@ -55,6 +59,11 @@ namespace fmrx
         // полоса управления
         juce::TextButton searchDn_, stepDown_, stepUp_, searchUp_, scan_, stop_, lock_, mute_;
         juce::Slider tuneSlider_;
+        // строка «ПОИСК»: скорость, чувствительность, щелчки
+        struct RowSlider { juce::Slider slider; juce::Label name; const char* key = ""; const char* tip = "";
+                           std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> att; };
+        RowSlider seekSpeed_, seekSens_, clickVol_;
+        juce::Rectangle<int> searchRow_;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tuneAtt_;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> afcAtt_, muteAtt_;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> demodAtt_, deemphAtt_, stModeAtt_;

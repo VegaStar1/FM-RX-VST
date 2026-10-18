@@ -1,6 +1,7 @@
 #pragma once
 #include "StationBuffer.h"
 #include "StationPrep.h"
+#include "Waveform.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_data_structures/juce_data_structures.h>
 #include <juce_events/juce_events.h>
@@ -21,6 +22,10 @@ namespace fmrx
         bool   loadFailed = false;   // файл есть, но не читается
         bool   loading = false;
         double durationSec = 0.0;
+        // Неразрушающая обрезка (секунды). trimEnd = 0 - до конца файла.
+        double trimStart = 0.0, trimEnd = 0.0;
+        float  fadeInMs = 10.f, fadeOutMs = 20.f;
+        std::shared_ptr<const Peaks> peaks;          // волна для редактора и строки (считается при загрузке)
     };
 
     // Владение и потоки (как в FREQUENCY-VST):
@@ -43,6 +48,14 @@ namespace fmrx
         StationMeta&       meta(int slot)       { return metas_[(size_t) slot]; }
         const StationMeta& meta(int slot) const { return metas_[(size_t) slot]; }
         bool hasAudio(int slot) const;               // message thread: слот содержит загруженный файл
+        std::shared_ptr<const StationBuffer> buffer(int slot) const;   // message thread, только чтение
+
+        // Обрезка: публикует новый отрезок в аудиопоток (без перезагрузки файла).
+        void setTrim(int slot, double startSec, double endSec);
+        void setFades(int slot, float fadeInMs, float fadeOutMs);
+        bool autoTrim(int slot, float thresholdDb);  // срезать тишину в начале и в конце
+        void resetTrim(int slot);
+        double snapSec(int slot, double sec) const;  // к ближайшему переходу через ноль (±2 мс)
 
         std::function<void()> onChange;              // UI подписывается (message thread)
 
@@ -60,6 +73,7 @@ namespace fmrx
 
     private:
         void publishSlot(int slot, std::shared_ptr<const StationBuffer> buf);
+        StationRegion regionFor(int slot, const StationBuffer* buf) const;
         void reloadAll();
         void notify() { if (onChange) onChange(); }
 

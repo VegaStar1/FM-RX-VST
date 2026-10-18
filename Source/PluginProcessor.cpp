@@ -52,6 +52,7 @@ namespace fmrx
         for (auto& c : inCopy_) c.assign((size_t) scratchSize_, 0.f);
         for (auto& c : out_) c.assign((size_t) scratchSize_, 0.f);
         for (auto& pl : players_) pl.reset();
+        for (auto& p : playPos_) p.store(-1);
         muteKnown_ = false;
         setLatencySamples(band_.latencySamples());
     }
@@ -161,11 +162,18 @@ namespace fmrx
                 {
                     auto& pl = players_[si];
                     if (control_.consumeRestart(i)) pl.restart();
+                    if (restartPending_[si].exchange(false, std::memory_order_acq_rel))
+                    {
+                        control_.requestPlay(i);                       // «▶ С НАЧАЛА» из редактора
+                        pl.restart();
+                    }
                     if (control_.slotState(i) == RadioControl::Slot::Parked) pl.park();
                     const StationBuffer* b = snap != nullptr ? snap->buffers[si].get() : nullptr;
                     const bool loop = ! cs[si].oneShot;
-                    if (pl.render(b, stScratch_[si][0].data(), stScratch_[si][1].data(), n, loop))
+                    const StationRegion rg = snap != nullptr ? snap->regions[si] : StationRegion {};
+                    if (pl.render(b, rg, stScratch_[si][0].data(), stScratch_[si][1].data(), n, loop))
                         control_.notifyEnded(i);
+                    playPos_[si].store(b != nullptr && ! pl.parked() && ! pl.ended() ? pl.position() : -1, std::memory_order_relaxed);
                     chans[i][0] = stScratch_[si][0].data(); chans[i][1] = stScratch_[si][1].data();
                 }
                 eff[si].on = cs[si].usable && control_.carrierOn(i);   // пустой слот / доигравший one-shot - без несущей
@@ -211,6 +219,20 @@ namespace fmrx
     }
 
     float FmRxProcessor::stationFreq(int slot) const { return sp_[(size_t) slot].freq->load(); }
+
+    double FmRxProcessor::playPositionSec(int slot) const
+    {
+        const int p = playPos_[(size_t) slot].load(std::memory_order_relaxed);
+        auto buf = stations_.buffer(slot);
+        if (p < 0 || buf == nullptr || buf->sampleRate <= 0) return -1.0;
+        return p / buf->sampleRate;
+    }
+
+    void FmRxProcessor::playFromStart(int slot)
+    {
+        tuneTo(stationFreq(slot));
+        restartPending_[(size_t) slot].store(true, std::memory_order_release);
+    }
 
     bool FmRxProcessor::stationAudible(int slot) const
     {

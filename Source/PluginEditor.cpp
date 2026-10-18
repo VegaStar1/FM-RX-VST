@@ -6,7 +6,7 @@ namespace fmrx
 
     namespace
     {
-        constexpr int kBaseW = 1180, kBaseH = 800, kMinW = 980, kMinH = 700;
+        constexpr int kBaseW = 1180, kBaseH = 830, kMinW = 980, kMinH = 730;
 
         void paintPanel(juce::Graphics& g, juce::Rectangle<int> r, const juce::String& title, const juce::String& hint)
         {
@@ -25,15 +25,25 @@ namespace fmrx
     }
 
     FmRxEditor::FmRxEditor(FmRxProcessor& p)
-        : AudioProcessorEditor(p), proc_(p), tuner_(p), settings_(p, *appSettings_)
+        : AudioProcessorEditor(p), proc_(p), tuner_(p), stationEditor_(p), settings_(p, *appSettings_)
     {
         setLookAndFeel(&lnf_);
         auto& st = p.state();
 
         addAndMakeVisible(tuner_);
         for (int i = 0; i < kNumStations; ++i)
-            addAndMakeVisible(rows_.add(new StationRow(p, i)));
-        p.stations().onChange = [this] { for (auto* r : rows_) r->refresh(); };
+        {
+            auto* row = rows_.add(new StationRow(p, i));
+            row->onOpenEditor = [this](int slot) { openStationEditor(slot); };
+            addAndMakeVisible(row);
+        }
+        addChildComponent(stationEditor_);
+        stationEditor_.onClose = [this] { closeStationEditor(); };
+        p.stations().onChange = [this]
+        {
+            for (auto* r : rows_) r->refresh();
+            if (stationEditor_.isVisible()) stationEditor_.refreshTexts();
+        };
 
         // --- шапка: пресеты, стерео, AFC, настройки ---
         presetPrev_.setButtonText(juce::String::fromUTF8("\xe2\x97\x80"));
@@ -79,6 +89,23 @@ namespace fmrx
         addAndMakeVisible(tuneSlider_);
         tuneAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(st, params::tune, tuneSlider_);
 
+        // --- строка «ПОИСК» ---
+        auto rowSlider = [this, &st](RowSlider& r, const char* id, const char* key, const char* tip)
+        {
+            r.key = key; r.tip = tip;
+            r.slider.setSliderStyle(juce::Slider::LinearHorizontal);
+            r.slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 48, 18);
+            addAndMakeVisible(r.slider);
+            r.name.setFont(font(11.f, true));
+            r.name.setJustificationType(juce::Justification::centredRight);
+            r.name.setInterceptsMouseClicks(false, false);
+            addAndMakeVisible(r.name);
+            r.att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(st, id, r.slider);
+        };
+        rowSlider(seekSpeed_, params::seekSpeed, "row_speed", "tip_speed");
+        rowSlider(seekSens_, params::seekSens, "row_sens", "tip_sens");
+        rowSlider(clickVol_, params::clickVol, "row_clicks", "tip_clicks");
+
         // --- эфир (две строки) и приёмник ---
         addKnob(noise_, params::noise, "k_noise", "t_noise", true);
         addKnob(fading_, params::fading, "k_fading", "t_fading", true);
@@ -122,6 +149,20 @@ namespace fmrx
         setLookAndFeel(nullptr);
     }
 
+    void FmRxEditor::openStationEditor(int slot)
+    {
+        for (auto* r : rows_) r->setVisible(false);
+        stationEditor_.open(slot);
+        repaint();
+    }
+
+    void FmRxEditor::closeStationEditor()
+    {
+        stationEditor_.close();
+        for (auto* r : rows_) r->setVisible(true);
+        repaint();
+    }
+
     std::array<FmRxEditor::Knob*, 14> FmRxEditor::allKnobs()
     {
         return { &noise_, &fading_, &fadeRate_, &multipath_, &impulse_, &drift_, &clean_, &noiseZone_,
@@ -154,7 +195,17 @@ namespace fmrx
         tuneSlider_.setColour(juce::Slider::trackColourId, col::line2);
         tuneSlider_.setColour(juce::Slider::backgroundColourId, col::line);
         tuneSlider_.setColour(juce::Slider::thumbColourId, col::amber);
+        for (auto* r : { &seekSpeed_, &seekSens_, &clickVol_ })
+        {
+            r->slider.setColour(juce::Slider::trackColourId, col::amber);
+            r->slider.setColour(juce::Slider::backgroundColourId, col::line);
+            r->slider.setColour(juce::Slider::thumbColourId, col::amber);
+            r->slider.setColour(juce::Slider::textBoxTextColourId, col::dim);
+            r->slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+            r->name.setColour(juce::Label::textColourId, col::text);
+        }
         for (auto* r : rows_) r->applyTheme();
+        stationEditor_.applyTheme();
         settings_.refresh();
         sendLookAndFeelChange();
         repaint();
@@ -183,12 +234,18 @@ namespace fmrx
         presetName_.setTooltip(tr("preset"));
         demod_.setTooltip(tr("t_demod"));
         deemph_.setTooltip(tr("t_deemph"));
+        for (auto* r : { &seekSpeed_, &seekSens_, &clickVol_ })
+        {
+            r->name.setText(tr(r->key), juce::dontSendNotification);
+            r->slider.setTooltip(tr(r->tip));
+        }
         for (auto* k : allKnobs())
         {
             k->name.setText(tr(k->labelKey), juce::dontSendNotification);
             k->slider.setTooltip(tr(k->tipKey));
         }
         for (auto* r : rows_) r->applyTexts();
+        stationEditor_.applyTexts();
         settings_.refresh();
         timerCallback();
         repaint();
@@ -309,7 +366,15 @@ namespace fmrx
         g.setColour(col::dim);
         g.drawText(tr("subtitle") + juce::String::fromUTF8("  \xc2\xb7  by NUWMUN"), top.removeFromLeft(330), juce::Justification::centredLeft);
 
-        paintPanel(g, stationsArea_, tr("stations"), tr("stations_hint"));
+        g.setColour(col::panel);
+        g.fillRoundedRectangle(searchRow_.toFloat(), 8.f);
+        g.setColour(col::line);
+        g.drawRoundedRectangle(searchRow_.toFloat().reduced(0.5f), 8.f, 1.f);
+        g.setFont(font(11.f, true));
+        g.setColour(col::dim);
+        g.drawText(tr("row_search"), searchRow_.withTrimmedLeft(14).withWidth(80), juce::Justification::centredLeft);
+
+        paintPanel(g, stationsArea_, tr("stations"), stationEditor_.isVisible() ? juce::String() : tr("stations_hint"));
         paintPanel(g, airArea_, tr("air"), tr("air_hint"));
         paintPanel(g, rxArea_, tr("receiver"), {});
     }
@@ -348,7 +413,23 @@ namespace fmrx
         searchUp_.setBounds(strip.removeFromRight(104).reduced(2));
         stepUp_.setBounds(strip.removeFromRight(38).reduced(2));
         tuneSlider_.setBounds(strip.reduced(8, 4));
-        r.removeFromTop(12);
+        r.removeFromTop(8);
+
+        searchRow_ = r.removeFromTop(30);
+        {
+            auto row = searchRow_.reduced(10, 3).withTrimmedLeft(84);
+            const int cell = row.getWidth() / 3;
+            const int nameW[3] = { 80, 130, 120 };
+            int i = 0;
+            for (auto* rs : { &seekSpeed_, &seekSens_, &clickVol_ })
+            {
+                auto c = row.removeFromLeft(cell);
+                rs->name.setBounds(c.removeFromLeft(nameW[i++]));
+                c.removeFromLeft(8);
+                rs->slider.setBounds(c.withTrimmedRight(16));
+            }
+        }
+        r.removeFromTop(10);
 
         stationsArea_ = r.removeFromLeft(r.getWidth() * 57 / 100);
         r.removeFromLeft(14);
@@ -360,6 +441,7 @@ namespace fmrx
         const int rowH = sa.getHeight() / kNumStations;
         for (int i = 0; i < rows_.size(); ++i)
             rows_[i]->setBounds(sa.getX(), sa.getY() + i * rowH, sa.getWidth(), rowH);
+        stationEditor_.setBounds(stationsArea_.reduced(14, 10).withTrimmedTop(26));
 
         auto air = airArea_.reduced(12, 10).withTrimmedTop(24);
         auto airTop = air.removeFromTop(air.getHeight() / 2);

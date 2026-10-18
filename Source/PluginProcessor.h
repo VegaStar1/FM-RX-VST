@@ -53,6 +53,8 @@ namespace fmrx
         bool  stationAudible(int slot) const;      // включена и есть звук (файл или вход)
         int   tunedStation() const;                // станция под стрелкой (-1 - нет)
         void  tuneTo(float mhz);
+        double playPositionSec(int slot) const;   // где сейчас играет станция (-1 - не играет)
+        void  playFromStart(int slot);            // настроиться и запустить станцию с НАЧАЛА отрезка
         void  setParam(const char* id, float plain);
 
     private:
@@ -69,6 +71,8 @@ namespace fmrx
         std::array<LoopPlayer, kNumStations> players_;
         bool lastMute_ = false, muteKnown_ = false;
         int timerTicks_ = 0;
+        std::array<std::atomic<int>, kNumStations> playPos_ {};
+        std::array<std::atomic<bool>, kNumStations> restartPending_ {};
 
         // Кэш указателей на параметры (чтение в аудиопотоке без поиска по строкам).
         struct StationParamPtrs { std::atomic<float>* on; std::atomic<float>* freq; std::atomic<float>* level;

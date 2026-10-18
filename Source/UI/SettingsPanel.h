@@ -6,12 +6,12 @@
 
 namespace fmrx::ui
 {
-    // Окно настроек поверх плагина: язык и скин (глобально), щелчки кнопок, скорость и чувствительность поиска
-    // (параметры проекта). Клик мимо карточки или × закрывает.
+    // Окно настроек поверх плагина: только язык и скин (глобально, для всех проектов).
+    // Клик мимо карточки или × закрывает.
     class SettingsPanel : public juce::Component
     {
     public:
-        SettingsPanel(FmRxProcessor& p, AppSettings& s) : proc_(p), settings_(s)
+        SettingsPanel(FmRxProcessor&, AppSettings& s) : settings_(s)
         {
             close_.setButtonText(juce::String::fromUTF8("\xc3\x97"));
             close_.onClick = [this] { setVisible(false); };
@@ -31,9 +31,6 @@ namespace fmrx::ui
                 addAndMakeVisible(b);
             }
 
-            setupSlider(clicks_, params::clickVol, clicksAtt_);
-            setupSlider(speed_, params::seekSpeed, speedAtt_);
-            setupSlider(sens_, params::seekSens, sensAtt_);
             refresh();
         }
 
@@ -42,12 +39,6 @@ namespace fmrx::ui
             en_.setToggleState(settings_.language() == Lang::En, juce::dontSendNotification);
             ru_.setToggleState(settings_.language() == Lang::Ru, juce::dontSendNotification);
             for (int i = 0; i < skins_.size(); ++i) skins_[i]->setToggleState(i == settings_.skin(), juce::dontSendNotification);
-            for (auto* s : { &clicks_, &speed_, &sens_ })
-            {
-                s->setColour(juce::Slider::trackColourId, col::amber);
-                s->setColour(juce::Slider::backgroundColourId, col::line);
-                s->setColour(juce::Slider::textBoxTextColourId, col::text);
-            }
             close_.setTooltip(tr("close"));
             repaint();
         }
@@ -101,9 +92,6 @@ namespace fmrx::ui
             const int sw = juce::jmin(110, (skin.getWidth() - 8 * (kNumSkins - 1)) / kNumSkins);
             for (auto* b : skins_) { b->setBounds(skin.removeFromLeft(sw)); skin.removeFromLeft(8); }
 
-            clicks_.setBounds(row("set_clicks", 30));
-            speed_.setBounds(row("set_speed", 30));
-            sens_.setBounds(row("set_sens", 30));
             noteArea_ = r.removeFromTop(20);
         }
 
@@ -143,26 +131,14 @@ namespace fmrx::ui
             int index_;
         };
 
-        void setupSlider(juce::Slider& s, const char* id, std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>& att)
-        {
-            s.setSliderStyle(juce::Slider::LinearHorizontal);
-            s.setTextBoxStyle(juce::Slider::TextBoxRight, false, 60, 20);
-            s.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-            addAndMakeVisible(s);
-            att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(proc_.state(), id, s);
-        }
-
         juce::Rectangle<int> card() const
         {
-            return getLocalBounds().withSizeKeepingCentre(juce::jmin(720, getWidth() - 40), juce::jmin(420, getHeight() - 40));
+            return getLocalBounds().withSizeKeepingCentre(juce::jmin(720, getWidth() - 40), juce::jmin(220, getHeight() - 40));
         }
 
-        FmRxProcessor& proc_;
         AppSettings& settings_;
         juce::TextButton close_, en_, ru_;
         juce::OwnedArray<SkinButton> skins_;
-        juce::Slider clicks_, speed_, sens_;
-        std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> clicksAtt_, speedAtt_, sensAtt_;
         std::vector<LabelRow> labelRows_;
         juce::Rectangle<int> noteArea_;
     };

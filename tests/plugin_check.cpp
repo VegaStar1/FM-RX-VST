@@ -137,6 +137,20 @@ int main(int argc, char** argv)
     CHECK((int) proc2->param(params::st(0, "mode").toRawUTF8()) == 1, "station mode restored");
     CHECK(proc2->presets().currentName() == preset::kFactory[5].name, "preset name restored");
 
+    // Обрезка сохраняется в проекте.
+    proc->stations().setTrim(4, 2.0, 10.0);
+    juce::MemoryBlock st2;
+    proc->getStateInformation(st2);
+    auto proc3 = std::make_unique<FmRxProcessor>();
+    proc3->setPlayConfigDetails(2, 2, 48000.0, 512);
+    proc3->prepareToPlay(48000.0, 512);
+    proc3->setStateInformation(st2.getData(), (int) st2.getSize());
+    pump(1500);
+    std::printf("restored trim %.3f .. %.3f\n", proc3->stations().meta(4).trimStart, proc3->stations().meta(4).trimEnd);
+    CHECK(std::fabs(proc3->stations().meta(4).trimStart - 2.0) < 0.003 && std::fabs(proc3->stations().meta(4).trimEnd - 10.0) < 0.003,
+          "trim markers restored with the project");
+    CHECK(proc3->stations().autoTrim(4, -50.f), "auto-trim runs on a loaded station");
+
     // Снимки интерфейса.
     setParam(*proc2, params::st(0, "mode"), 0.f);
     setParam(*proc2, params::fading, 0.2f);
@@ -159,6 +173,16 @@ int main(int argc, char** argv)
         }
         app->setSkin(0);
         app->setLanguage(ui::Lang::Ru);
+        // Редактор станции: авто-обрезка и снимок.
+        CHECK(proc2->stations().meta(0).peaks != nullptr, "waveform computed on load");
+        proc2->stations().setTrim(0, 1.5, 20.0);
+        proc2->stations().setFades(0, 40.f, 60.f);
+        ed->openStationEditor(0);
+        for (int i = 0; i < 10; ++i) { runBlocks(*proc2, 4, finite); pump(30); }
+        snapshot(*ed, outDir.getChildFile("ui_editor_ru.png"));
+        ed->closeStationEditor();
+        pump(30);
+        snapshot(*ed, outDir.getChildFile("ui_rows_ru.png"));
         ed->openSettings(true);
         pump(60);
         snapshot(*ed, outDir.getChildFile("ui_settings_ru.png"));

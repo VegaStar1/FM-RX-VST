@@ -2,6 +2,7 @@
 #include "PluginProcessor.h"
 #include "Strings.h"
 #include "Theme.h"
+#include "WaveDraw.h"
 
 namespace fmrx::ui
 {
@@ -21,9 +22,8 @@ namespace fmrx::ui
             num_.onClick = [this] { proc_.tuneTo(proc_.stationFreq(slot_)); };
             addAndMakeVisible(num_);
 
-            name_.setEditable(false, true, false);
             name_.setFont(font(13.f, true));
-            name_.onTextChange = [this] { proc_.stations().setName(slot_, name_.getText().toUpperCase().substring(0, 16)); };
+            name_.setInterceptsMouseClicks(false, false);        // клик по имени/волне открывает редактор
             addAndMakeVisible(name_);
 
             detail_.setFont(font(11.f));
@@ -70,7 +70,15 @@ namespace fmrx::ui
             applyTexts();
         }
 
+        std::function<void(int)> onOpenEditor;
+
         void setTuned(bool t) { if (t != tuned_) { tuned_ = t; repaint(); } }
+
+        void mouseUp(const juce::MouseEvent& e) override
+        {
+            if (infoArea_.contains(e.getPosition()) && ! e.mouseWasDraggedSinceMouseDown() && onOpenEditor && ! input_)
+                onOpenEditor(slot_);
+        }
         // 0 играет, 1 стоп, 2 доиграла. Заодно ловим смену источника из автоматизации/состояния.
         void setPlayState(int s) { if (s != playState_) { playState_ = s; refresh(); } }
 
@@ -89,7 +97,7 @@ namespace fmrx::ui
         void applyTexts()
         {
             num_.setTooltip(tr("st_tune"));
-            name_.setTooltip(tr("st_rename"));
+            setTooltipForInfo();
             src_.setTooltip(tr("st_src"));
             applySrcLook();
             load_.setTooltip(tr("st_load"));
@@ -114,12 +122,13 @@ namespace fmrx::ui
             else if (m.loadFailed) d = tr("st_failed") + m.file.getFileName();
             else if (m.loaded)
             {
-                d = m.file.getFileName() + "  " + juce::String(m.durationSec, 1) + " s";
-                if (playState_ == 1) d = juce::String::fromUTF8("\xe2\x96\xa0 ") + tr("st_parked") + "  " + d;
-                if (playState_ == 2) d = juce::String::fromUTF8("\xe2\x9c\x93 ") + tr("st_done") + "  " + d;
+                d = {};                                            // вместо текста - мини-волна (paint)
+                if (playState_ == 1) d = juce::String::fromUTF8("\xe2\x96\xa0 ") + tr("st_parked");
+                if (playState_ == 2) d = juce::String::fromUTF8("\xe2\x9c\x93 ") + tr("st_done");
             }
             else d = tr("st_drop");
             detail_.setText(d, juce::dontSendNotification);
+            detail_.setJustificationType(m.loaded && ! input ? juce::Justification::centredRight : juce::Justification::centredLeft);
             detail_.setColour(juce::Label::textColourId, (m.missing || m.loadFailed) ? col::warn : col::dim);
             load_.setEnabled(! input);
             mode_.setEnabled(! input);
@@ -135,6 +144,23 @@ namespace fmrx::ui
                 g.fillRoundedRectangle(r, 7.f);
                 g.setColour(col::rowHotEdge);
                 g.drawRoundedRectangle(r, 7.f, 1.f);
+            }
+            // Мини-волна с маркерами обрезки (зелёный - НАЧАЛО, красный - КОНЕЦ).
+            const auto& m = proc_.stations().meta(slot_);
+            if (m.loaded && ! input_ && m.peaks != nullptr && m.peaks->buckets > 0)
+            {
+                auto w = detail_.getBounds().toFloat().reduced(0.f, 2.f);
+                g.setColour(col::band);
+                g.fillRoundedRectangle(w, 2.f);
+                const double dur = juce::jmax(0.001, m.durationSec);
+                drawPeaks(g, *m.peaks, 0, w.reduced(1.f, 1.f), 0.0, dur, col::cyan.withAlpha(playState_ == 0 ? 0.85f : 0.4f));
+                const float xs = w.getX() + (float) (m.trimStart / dur) * w.getWidth();
+                const float xe = w.getX() + (float) ((m.trimEnd > 0.0 ? m.trimEnd : dur) / dur) * w.getWidth();
+                g.setColour(juce::Colours::black.withAlpha(0.5f));
+                g.fillRect(juce::Rectangle<float>(w.getX(), w.getY(), xs - w.getX(), w.getHeight()));
+                g.fillRect(juce::Rectangle<float>(xe, w.getY(), w.getRight() - xe, w.getHeight()));
+                g.setColour(juce::Colour(0xff6fdc8c)); g.fillRect(xs - 0.5f, w.getY(), 1.5f, w.getHeight());
+                g.setColour(juce::Colour(0xffff6b6b)); g.fillRect(xe - 1.f, w.getY(), 1.5f, w.getHeight());
             }
             if (dragOver_)
             {
@@ -165,6 +191,7 @@ namespace fmrx::ui
             r.removeFromRight(4);
             src_.setBounds(r.removeFromRight(64).reduced(1, 5));
             r.removeFromRight(8);
+            infoArea_ = r;
             name_.setBounds(r.removeFromTop(h / 2 + 2));
             detail_.setBounds(r);
         }
@@ -187,6 +214,12 @@ namespace fmrx::ui
         }
 
     private:
+        void setTooltipForInfo()
+        {
+            name_.setTooltip(tr("st_open"));
+            detail_.setTooltip(tr("st_open"));
+        }
+
         void applySrcLook()
         {
             src_.setButtonText(input_ ? tr("src_input").toUpperCase() : tr("src_file").toUpperCase());
@@ -222,6 +255,7 @@ namespace fmrx::ui
         const int slot_;
         bool tuned_ = false, dragOver_ = false, oneShot_ = false;
         int playState_ = 0;
+        juce::Rectangle<int> infoArea_;
         bool input_ = false;
         juce::TextButton num_, src_, load_, clear_, mode_, stereo_, on_;
         juce::Label name_, detail_;

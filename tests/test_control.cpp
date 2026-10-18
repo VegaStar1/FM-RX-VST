@@ -3,6 +3,7 @@
 #include "Dsp/ClickGen.h"
 #include "Engine/RadioControl.h"
 #include "Stations/LoopPlayer.h"
+#include "Stations/Waveform.h"
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -189,19 +190,79 @@ static void testPlayer()
     LoopPlayer pl;
     std::vector<float> l(512), r(512);
     int ends = 0;
-    for (int i = 0; i < 20; ++i) ends += pl.render(&b, l.data(), r.data(), 512, false) ? 1 : 0;
+    for (int i = 0; i < 20; ++i) ends += pl.render(&b, StationRegion {}, l.data(), r.data(), 512, false) ? 1 : 0;
     CHECK(ends == 1 && pl.ended() && l[100] == 0.f, "one-shot ends once and then is silent");
     pl.restart();
-    pl.render(&b, l.data(), r.data(), 512, false);
+    pl.render(&b, StationRegion {}, l.data(), r.data(), 512, false);
     CHECK(l[511] > 0.4f, "restart plays again");
     pl.park();
-    pl.render(&b, l.data(), r.data(), 512, false);
-    pl.render(&b, l.data(), r.data(), 512, false);
+    pl.render(&b, StationRegion {}, l.data(), r.data(), 512, false);
+    pl.render(&b, StationRegion {}, l.data(), r.data(), 512, false);
     CHECK(pl.parked() && l[511] == 0.f, "park fades out and stops");
     ends = 0;
     pl.restart();
-    for (int i = 0; i < 40; ++i) ends += pl.render(&b, l.data(), r.data(), 512, true) ? 1 : 0;
+    for (int i = 0; i < 40; ++i) ends += pl.render(&b, StationRegion {}, l.data(), r.data(), 512, true) ? 1 : 0;
     CHECK(ends == 0 && l[300] > 0.4f, "loop never ends");
+}
+
+static void testRegion()
+{
+    std::printf("[region, waveform, auto-trim]\n");
+    // Файл: 0.2 с тишины, 0.6 с синуса, 0.2 с тишины.
+    StationBuffer b;
+    b.id = 9; b.numChannels = 1; b.sampleRate = kFs; b.length = (int) kFs;
+    b.ch[0].assign((size_t) b.length, 0.f);
+    for (int i = (int) (0.2 * kFs); i < (int) (0.8 * kFs); ++i) b.ch[0][(size_t) i] = 0.5f * (float) std::sin(2 * 3.14159265 * 300 * i / kFs);
+
+    const auto t = findSilenceTrim(b, -50.f);
+    std::printf("  auto-trim: %.3f .. %.3f s\n", t.startSec, t.endSec);
+    CHECK(t.found && std::fabs(t.startSec - 0.19) < 0.005 && std::fabs(t.endSec - 0.81) < 0.005, "silence trimmed with 10 ms margin");
+
+    const auto pk = computePeaks(b, 100);
+    CHECK(pk->buckets == 100 && pk->mx[0][5] < 0.01f && pk->mx[0][50] > 0.45f && pk->mn[0][50] < -0.45f, "peaks follow the waveform");
+
+    const int z = snapToZeroCrossing(b, (int) (0.5 * kFs) + 7, 96);
+    CHECK(std::fabs(b.ch[0][(size_t) z]) < 0.02f, "marker snaps to a zero crossing");
+
+    // One-shot по отрезку: начинается с НАЧАЛА, кончается на КОНЦЕ.
+    StationRegion rg; rg.start = (int) (0.2 * kFs); rg.end = (int) (0.5 * kFs); rg.fadeIn = 0; rg.fadeOut = 0;
+    LoopPlayer pl;
+    std::vector<float> l(512), r(512);
+    int rendered = 0, endBlock = -1;
+    for (int k = 0; k < 60 && endBlock < 0; ++k)
+    {
+        if (pl.render(&b, rg, l.data(), r.data(), 512, false)) endBlock = k;
+        rendered += 512;
+    }
+    const double playedSec = (endBlock + 1) * 512 / kFs;
+    std::printf("  one-shot region 0.3 s -> ended after ~%.2f s\n", playedSec);
+    CHECK(endBlock >= 0 && std::fabs(playedSec - 0.3) < 0.02, "one-shot plays exactly the region");
+
+    pl.restart();
+    pl.render(&b, rg, l.data(), r.data(), 64, true);
+    CHECK(pl.position() == rg.start + 64, "restart begins at the START marker");
+    pl.park();
+    for (int k = 0; k < 4; ++k) pl.render(&b, rg, l.data(), r.data(), 512, true);
+    CHECK(pl.parked() && pl.position() == rg.start, "park returns to the START marker");
+
+    // Loop по отрезку никогда не выходит за его границы.
+    pl.restart();
+    bool inside = true;
+    for (int k = 0; k < 100; ++k)
+    {
+        pl.render(&b, rg, l.data(), r.data(), 512, true);
+        inside = inside && pl.position() >= rg.start && pl.position() < rg.end;
+    }
+    CHECK(inside, "loop stays inside the region");
+
+    // Сдвиг отрезка во время игры: позиция переходит в новый отрезок.
+    StationRegion rg2 = rg; rg2.start = (int) (0.6 * kFs); rg2.end = (int) (0.7 * kFs);
+    pl.render(&b, rg2, l.data(), r.data(), 16, true);
+    CHECK(pl.position() >= rg2.start && pl.position() < rg2.end, "moving the markers moves playback");
+
+    StationRegion bad; bad.start = 5000; bad.end = 10;
+    const auto c = bad.clampedTo(b.length);
+    CHECK(c.start == 0 && c.end == b.length, "invalid region falls back to the whole file");
 }
 
 static void testClicks()
@@ -232,6 +293,7 @@ int main()
     testStopRewind();
     testOneShot();
     testPlayer();
+    testRegion();
     testClicks();
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
