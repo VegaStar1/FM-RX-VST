@@ -165,9 +165,13 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k ci "$KC"
           security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
       - name: Installer (.pkg)
-        run: packaging/macos/build_pkg.sh "$FMRX_VERSION" "build/FmRx_artefacts/Release/VST3/FM RX.vst3" docs/manual dist
+        run: |
+          set -o pipefail
+          packaging/macos/build_pkg.sh "$FMRX_VERSION" "build/FmRx_artefacts/Release/VST3/FM RX.vst3" docs/manual dist 2>&1 | tee pkg.log \
+            || { echo "::error title=pkg::$(tail -n 30 pkg.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; exit 1; }
       - name: Test install
         run: |
+          trap 'echo "::error title=install::failed at line $LINENO"' ERR
           sudo installer -pkg "dist/FM-RX-$FMRX_VERSION-macOS.pkg" -target /
           test -f "/Library/Audio/Plug-Ins/VST3/FM RX.vst3/Contents/MacOS/FM RX"
           test -f "/Library/Application Support/NUWMUN/FM RX/FM RX Manual EN.pdf"
