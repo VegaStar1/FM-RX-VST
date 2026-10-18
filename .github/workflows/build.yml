@@ -1,7 +1,9 @@
 name: build
 
 # На каждый push: тесты ядра, плагин и установщики для Windows и macOS, проверка pluginval, тестовая установка.
-# На тег vX.Y.Z (совпадает с версией в CMakeLists.txt): черновик релиза GitHub с установщиками и PDF-инструкциями.
+# Push в main (или тег vX.Y.Z): черновик релиза GitHub vX.Y.Z (версия из CMakeLists.txt) с установщиками и PDF.
+# Черновик обновляется при каждом push, пока его не опубликуют; опубликованный релиз не трогается -
+# для следующего выпуска поднимите версию.
 #
 # Подпись (необязательно, по секретам репозитория; без них установщики собираются неподписанными):
 #   Windows: WIN_CERT_PFX_BASE64, WIN_CERT_PASSWORD
@@ -185,7 +187,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: [ core-tests-linux, windows, macos ]
     runs-on: ubuntu-24.04
     permissions:
@@ -202,13 +204,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           V=$(sed -n 's/^project(FmRx VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
-          TAG="${GITHUB_REF_NAME}"
-          [ "$TAG" = "v$V" ] || { echo "tag $TAG does not match CMake version $V"; exit 1; }
-          cp "docs/manual/FM RX Manual EN.pdf" dist/FM-RX-$V-Manual-EN.pdf
-          cp "docs/manual/FM RX Manual RU.pdf" dist/FM-RX-$V-Manual-RU.pdf
-          ls -la dist
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --clobber
-          else
-            gh release create "$TAG" dist/* --draft --title "FM RX $V" --notes-file packaging/RELEASE_NOTES.md
+          TAG="v$V"
+          if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "$TAG" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match CMake version $V"; exit 1
           fi
+          cp "docs/manual/FM RX Manual EN.pdf" "dist/FM-RX-$V-Manual-EN.pdf"
+          cp "docs/manual/FM RX Manual RU.pdf" "dist/FM-RX-$V-Manual-RU.pdf"
+          ls -la dist
+          # Черновики не находятся по тегу - ищем в списке.
+          STATE=$(gh release list --limit 100 --json tagName,isDraft --jq ".[] | select(.tagName==\"$TAG\") | if .isDraft then \"draft\" else \"published\" end")
+          case "$STATE" in
+            "")        gh release create "$TAG" dist/* --draft --target "$GITHUB_SHA" --title "FM RX $V" --notes-file packaging/RELEASE_NOTES.md
+                       echo "::notice::draft release $TAG created" ;;
+            draft)     gh release edit "$TAG" --target "$GITHUB_SHA" --notes-file packaging/RELEASE_NOTES.md
+                       gh release upload "$TAG" dist/* --clobber
+                       echo "::notice::draft release $TAG updated" ;;
+            *)         echo "::notice::release $TAG is already published - bump the version for a new release" ;;
+          esac

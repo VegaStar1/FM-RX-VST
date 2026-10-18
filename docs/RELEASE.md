@@ -6,12 +6,13 @@
    - снимки: собрать `-DFMRX_BUILD_CHECK=ON`, запустить `FmRxCheck <station.wav> <out>`, скопировать
      `manual_*.png` в `docs/manual/img/*.jpg`;
    - PDF: `python3 docs/manual/make_manual.py --version X.Y.Z` (нужны reportlab, Pillow, шрифты DejaVu).
-3. Закоммитить, дождаться зелёной сборки на `main`.
-4. Поставить тег: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-5. GitHub Actions соберёт установщики, проверит их (pluginval, тестовая установка и удаление) и создаст
-   **черновик** релиза с файлами:
+3. Закоммитить и сделать push в `main`.
+4. GitHub Actions соберёт установщики, проверит их (pluginval, тестовая установка и удаление) и создаст или
+   обновит **черновик** релиза `vX.Y.Z` с файлами:
    `FM-RX-X.Y.Z-Windows-Setup.exe`, `FM-RX-X.Y.Z-macOS.pkg`, `FM-RX-X.Y.Z-Manual-EN.pdf`, `FM-RX-X.Y.Z-Manual-RU.pdf`.
-   Черновик видят только участники репозитория: скачайте файлы и загрузите их в магазин.
+   Черновик видят только участники репозитория: скачайте файлы и загрузите их в магазин. Пока черновик не
+   опубликован, каждый push в `main` обновляет его файлы. Когда опубликуете (Releases → Edit → Publish release;
+   при этом создаётся тег `vX.Y.Z`), следующие push его не трогают - для новой версии поднимите номер.
 
 ## Что делают установщики
 | | Windows (.exe, Inno Setup) | macOS (.pkg) |

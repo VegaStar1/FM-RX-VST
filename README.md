@@ -27,7 +27,7 @@ VST3-плагин на JUCE 8: до восьми стерео-станций н�
 
 ## Установка
 
-Готовые установщики - в релизах GitHub (выпускаются по тегу `vX.Y.Z`, см. [docs/RELEASE.md](docs/RELEASE.md)):
+Готовые установщики - в релизах GitHub (черновик релиза собирается автоматически при push в main, см. [docs/RELEASE.md](docs/RELEASE.md)):
 `FM-RX-<версия>-Windows-Setup.exe` (VST3 -> `C:\Program Files\Common Files\VST3`) и `FM-RX-<версия>-macOS.pkg`
 (универсальный, VST3 -> `/Library/Audio/Plug-Ins/VST3`). Оба ставят PDF-инструкцию на русском и английском
 ([docs/manual](docs/manual)). При первом запуске плагин показывает краткую помощь; потом - шестерёнка -> Помощь.
