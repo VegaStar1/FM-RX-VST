@@ -44,6 +44,7 @@ namespace fmrx
         float sensitivity = 0.5f;   // 0..1: выше - останавливается и на слабых станциях
         float speed = 0.5f;         // 0..1: скорость поиска
         float scanDwellSec = 5.f;
+        float endDelaySec = 0.45f;  // пауза после конца 1-SHOT перед автопоиском
     };
 
     class RadioControl
@@ -152,7 +153,7 @@ namespace fmrx
             {
                 endState_ = 1;
                 endFrom_ = slot;
-                endDelay_ = (int) (0.45 * fs_);
+                endDelay_ = (int) (std::clamp(p_.endDelaySec, 0.f, 10.f) * fs_);
             }
         }
 
@@ -168,7 +169,11 @@ namespace fmrx
         // --- результаты для аудиопотока ---
         float tuneTarget() const noexcept { return target_; }
         Slot slotState(int i) const noexcept { return slots_[(size_t) i].state; }
-        bool carrierOn(int i) const noexcept { return slots_[(size_t) i].state != Slot::Done; }
+        // Доигравшая станция продолжает «вещать тишину», пока стрелка не уйдёт с неё: шум нарастает плавно,
+        // по мере ухода стрелки через шумовую зону, а не обрывается резким всплеском.
+        bool carrierOn(int) const noexcept { return true; }
+        // Идёт автоматический переход после 1-SHOT: пауза и поиск (до начала доводки на следующую станцию).
+        bool handoverActive() const noexcept { return endState_ == 1 || (endState_ == 2 && state_ == State::Searching); }
         bool consumeRestart(int i) noexcept { auto& s = slots_[(size_t) i]; const bool r = s.restartPending; s.restartPending = false; return r; }
 
         // --- для UI (любой поток) ---

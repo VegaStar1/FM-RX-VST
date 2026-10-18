@@ -1,0 +1,46 @@
+﻿FM RX @VERSION@ — 8-station FM band receiver (VST3) · NUWMUN
+================================================================
+
+РУССКИЙ
+
+Windows (10/11, 64-бит)
+  1. Запустите FM-RX-@VERSION@-Windows-Setup.exe.
+  2. Если Windows покажет «Система Windows защитила ваш компьютер» —
+     нажмите «Подробнее» → «Выполнить в любом случае».
+  3. Нажмите «Установить». Плагин встанет в
+     C:\Program Files\Common Files\VST3\FM RX.vst3
+  4. Откройте DAW и пересканируйте плагины.
+
+macOS (10.13 и новее, Apple Silicon и Intel)
+  1. Откройте FM-RX-@VERSION@-macOS.pkg.
+  2. Если macOS напишет «неустановленный разработчик» — нажмите на файл
+     правой кнопкой → «Открыть» (или «Системные настройки» →
+     «Конфиденциальность и безопасность» → «Всё равно открыть»).
+  3. Пройдите шаги установщика. Плагин встанет в
+     /Library/Audio/Plug-Ins/VST3/FM RX.vst3
+  4. Откройте DAW и пересканируйте плагины.
+
+Полная инструкция — FM-RX-@VERSION@-Manual-RU.pdf в этом архиве.
+FM RX появится в DAW как эффект от NUWMUN.
+
+
+ENGLISH
+
+Windows (10/11, 64-bit)
+  1. Run FM-RX-@VERSION@-Windows-Setup.exe.
+  2. If Windows shows "Windows protected your PC", click
+     More info → Run anyway.
+  3. Click Install. The plug-in goes to
+     C:\Program Files\Common Files\VST3\FM RX.vst3
+  4. Open your DAW and rescan plug-ins.
+
+macOS (10.13 or later, Apple Silicon and Intel)
+  1. Open FM-RX-@VERSION@-macOS.pkg.
+  2. If macOS says the developer cannot be verified, right-click the file
+     → Open (or System Settings → Privacy & Security → Open Anyway).
+  3. Follow the installer. The plug-in goes to
+     /Library/Audio/Plug-Ins/VST3/FM RX.vst3
+  4. Open your DAW and rescan plug-ins.
+
+Full manual: FM-RX-@VERSION@-Manual-EN.pdf in this archive.
+FM RX shows up in your DAW as an effect by NUWMUN.

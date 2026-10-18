@@ -112,6 +112,53 @@ int main(int argc, char** argv)
     std::printf("one-shot end -> %.2f MHz, done mask %u\n", proc->param(params::tune), proc->control().doneMask());
     CHECK(std::fabs(proc->param(params::tune) - 90.1f) < 0.02f, "finished one-shot hands over to the next station");
 
+    // Переход после 1-SHOT: громкость шума перехода и защита автоматизации TUNE.
+    {
+        proc->stations().setTrim(0, 0.0, 1.0);                  // короткий отрезок - быстрый тест
+        setParam(*proc, params::softMute, 0.f);                  // шум между станциями слышен
+        setParam(*proc, params::hoDelay, 0.3f);
+        auto handoverLoudness = [&](float hoNoise, bool keepAuto, float& endTune, float& paramAfter)
+        {
+            setParam(*proc, params::hoNoise, hoNoise);
+            setParam(*proc, params::keepAuto, keepAuto ? 1.f : 0.f);
+            setParam(*proc, params::tune, 95.0f); runBlocks(*proc, 20, finite); pump(20);
+            setParam(*proc, params::tune, 88.4f); runBlocks(*proc, 20, finite); pump(20);   // настроились - старт с начала
+            const float paramBefore = proc->param(params::tune);
+            juce::AudioBuffer<float> buf(2, 512);
+            juce::MidiBuffer midi;
+            double peakWin = 0.0, acc = 0.0;
+            int accN = 0;
+            bool ended = false;
+            for (int b = 0; b < 1200; ++b)                      // до ~12.8 с
+            {
+                buf.clear();
+                proc->processBlock(buf, midi);
+                if (! ended && proc->control().handoverActive()) ended = true;
+                if (ended && proc->control().handoverActive())
+                    for (int i = 0; i < 512; ++i) { const double v = buf.getSample(0, i); acc += v * v; if (++accN == 2400) { peakWin = std::max(peakWin, std::sqrt(acc / accN)); acc = 0; accN = 0; } }
+                if (ended && ! proc->control().handoverActive()) break;
+                if (b % 4 == 3) pump(1);
+            }
+            for (int k = 0; k < 10; ++k) { runBlocks(*proc, 10, finite); pump(10); }
+            endTune = proc->displayFreq();
+            paramAfter = proc->param(params::tune);
+            (void) paramBefore;
+            return peakWin;
+        };
+        float t1 = 0, p1 = 0, t2 = 0, p2 = 0;
+        const double loud = handoverLoudness(1.0f, false, t1, p1);
+        const double quiet = handoverLoudness(0.1f, true, t2, p2);
+        std::printf("hand-over noise: 100%% -> %.4f rms, 10%% -> %.4f rms; keep-automation: heard %.2f MHz, TUNE param %.2f\n",
+                    loud, quiet, t2, p2);
+        CHECK(std::fabs(t1 - 90.1f) < 0.02f && std::fabs(p1 - 90.1f) < 0.02f, "hand-over writes TUNE when automation is not protected");
+        CHECK(quiet < loud * 0.2, "HAND-OVER NOISE turns the switching noise down");
+        CHECK(std::fabs(t2 - 90.1f) < 0.02f && std::fabs(p2 - 88.4f) < 0.01f, "KEEP TUNE AUTOMATION: next station heard, TUNE parameter untouched");
+        setParam(*proc, params::keepAuto, 0.f);
+        setParam(*proc, params::hoNoise, 0.6f);
+        setParam(*proc, params::softMute, 0.55f);
+        proc->stations().setTrim(0, 0.0, 0.0);
+    }
+
     // Пресеты.
     auto& pm = proc->presets();
     CHECK(pm.entries().size() >= 12, "factory presets present");
@@ -192,7 +239,7 @@ int main(int argc, char** argv)
         app->setShowHelpOnStart(true);
         auto* raw = proc2->createEditor();
         std::unique_ptr<FmRxEditor> ed(dynamic_cast<FmRxEditor*>(raw));
-        ed->setSize(1180, 800);
+        ed->setSize(1180, 900);
         for (int i = 0; i < 20; ++i) { runBlocks(*proc2, 4, finite); pump(30); }
 
         // Помощь при первом запуске.
@@ -265,7 +312,7 @@ int main(int argc, char** argv)
             pump(30);
         }
         app->setLanguage(ui::Lang::Ru);
-        ed->setSize(980, 700);
+        ed->setSize(980, 790);
         const auto small = ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f);
         CHECK(small.isValid(), "UI lays out at minimum size");
     }

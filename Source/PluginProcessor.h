@@ -82,7 +82,10 @@ namespace fmrx
                           * pStMode_ = nullptr, * pBlend_ = nullptr, * pSoftMute_ = nullptr, * pHiCut_ = nullptr, * pSpeaker_ = nullptr,
                           * pOutput_ = nullptr, * pNoise_ = nullptr, * pFading_ = nullptr, * pFadeRate_ = nullptr, * pMultipath_ = nullptr,
                           * pImpulse_ = nullptr, * pDrift_ = nullptr, * pClean_ = nullptr, * pNoiseZone_ = nullptr, * pMute_ = nullptr,
-                          * pClickVol_ = nullptr, * pSeekSpeed_ = nullptr, * pSeekSens_ = nullptr;
+                          * pClickVol_ = nullptr, * pSeekSpeed_ = nullptr, * pSeekSens_ = nullptr,
+                          * pHoDelay_ = nullptr, * pHoNoise_ = nullptr, * pKeepAuto_ = nullptr,
+                          * pNTone_ = nullptr, * pNFreq_ = nullptr, * pNReso_ = nullptr;
+        float hoGain_ = 1.f, hoK_ = 0.001f;        // громкость во время автоперехода после 1-SHOT (сглаженная)
 
         // Рабочие буферы (выделяются в prepareToPlay).
         int scratchSize_ = 0;

@@ -67,7 +67,14 @@ namespace fmrx
         struct RowSlider { juce::Slider slider; juce::Label name; const char* key = ""; const char* tip = "";
                            std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> att; };
         RowSlider seekSpeed_, seekSens_, clickVol_;
-        juce::Rectangle<int> searchRow_;
+        // строка «ПЕРЕХОД» (после 1-SHOT): пауза, шум перехода, защита автоматизации
+        RowSlider hoDelay_, hoNoise_;
+        juce::TextButton keepAuto_;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> keepAutoAtt_;
+        // строка «ЦВЕТ ШУМА»: тон, частота, резкость
+        RowSlider nTone_, nFreq_, nReso_;
+        juce::Rectangle<int> searchRow_, handoverRow_, colourRow_;
+        std::array<RowSlider*, 8> rowSliders() { return { &seekSpeed_, &seekSens_, &clickVol_, &hoDelay_, &hoNoise_, &nTone_, &nFreq_, &nReso_ }; }
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tuneAtt_;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> afcAtt_, muteAtt_;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> demodAtt_, deemphAtt_, stModeAtt_;

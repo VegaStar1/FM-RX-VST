@@ -105,19 +105,19 @@ def img_flow(path, size, width):
     return RLImage(path, width=width, height=width * h / w)
 
 
-# Области на снимке главного окна (1770 x 1200, масштаб 1.5).
+# Области на снимке главного окна (1770 x 1350, окно 1180 x 900, масштаб 1.5).
 BOX = {
-    "lcd": (25, 82, 455, 415),
-    "band": (465, 82, 1745, 415),
-    "controls": (20, 420, 1750, 540),
-    "stations": (25, 545, 1010, 1180),
-    "air": (1020, 545, 1745, 890),
-    "rx": (1020, 900, 1745, 1180),
+    "lcd": (25, 82, 455, 462),
+    "band": (465, 82, 1745, 462),
+    "controls": (20, 466, 1750, 692),
+    "stations": (25, 700, 1010, 1332),
+    "air": (1020, 700, 1745, 1042),
+    "rx": (1020, 1056, 1745, 1332),
     "header": (900, 15, 1750, 80),
-    "settings": (345, 435, 1425, 765),
-    "help": (210, 150, 1560, 1050),
+    "settings": (345, 470, 1425, 880),
+    "help": (210, 225, 1560, 1125),
 }
-MARKS = [(1180, 77), (1600, 77), (62, 250), (1100, 250), (700, 449), (150, 510), (230, 574), (1250, 574), (1210, 934)]
+MARKS = [(1180, 77), (1600, 77), (62, 300), (1100, 300), (700, 494), (150, 580), (230, 727), (1250, 727), (1210, 1085)]
 
 
 # ---------------------------------------------------------------- документ
@@ -156,7 +156,7 @@ class ManualDoc(BaseDocTemplate):
                                            else "8-station FM band receiver · VST3 · version ") + self.version)
         img = os.path.join(IMG, f"manual_{self.lang}_main.jpg")
         iw = W - 2 * MARGIN
-        ih = iw * 1200 / 1770
+        ih = iw * 1350 / 1770
         c.drawImage(img, MARGIN, H - 95 * mm - ih, width=iw, height=ih)
         c.setFont("Sans-Bold", 12)
         c.setFillColor(colors.HexColor("#e8e4da"))
@@ -341,7 +341,8 @@ def content_ru(v):
                 "**Табло** — частота, имя станции (RDS), индикаторы, S-метр, SNR и AFC.",
                 "**Шкала диапазона** — станции, их зоны приёма и стрелка настройки.",
                 "**Полоса управления** — ПОИСК ◀ ▶, шаг ±0.05 МГц, ползунок TUNE, СКАН, СТОП, LOCK, MUTE.",
-                "**Строка ПОИСК** — скорость и чувствительность поиска, громкость щелчков кнопок.",
+                "**Строки ПОИСК, ПЕРЕХОД и ЦВЕТ ШУМА** — скорость и чувствительность поиска, щелчки кнопок; пауза и шум "
+                "перехода после 1-SHOT, защита автоматизации; тон, частота и резкость шума.",
                 "**Станции** — восемь передатчиков; клик по мини-волне открывает редактор файла.",
                 "**Эфир · канал** — шум, замирания, отражения, помехи, дрейф и зоны приёма.",
                 "**Приёмник** — ПЧ-фильтр, стерео, шумодав, срез ВЧ, динамик, выход, демодулятор и деэмфазис."]),
@@ -410,6 +411,12 @@ def content_ru(v):
         ("p", "Все ручки и переключатели — параметры плагина, их видит DAW. Самый интересный — **Tune**: нарисуйте огибающую, "
               "и стрелка будет «крутить эфир» по вашему рисунку, проходя через шум и соседние станции. Результат поиска "
               "тоже записывается в Tune, поэтому ручка в DAW всегда показывает то, что слышно."),
+        ("h2", "Защита автоматизации"),
+        ("p", "Многие DAW (например, Ableton Live) отключают записанную автоматизацию, как только плагин сам меняет параметр. "
+              "Поэтому, если у Tune есть автоматизация, включите **ЗАЩИТА АВТОМАТИЗАЦИИ** в строке ПЕРЕХОД: поиск, скан, "
+              "автопереход после 1-SHOT, LOCK и двойной СТОП перестанут записывать частоту в Tune. Звук и табло работают как "
+              "обычно, а ручка Tune в DAW остаётся такой, как в вашей автоматизации. Как только автоматизация сдвинет Tune, "
+              "приёмник пойдёт за ней."),
 
         ("h1", "7. LOOP и 1-SHOT", "break"),
         ("h2", "LOOP"),
@@ -424,6 +431,16 @@ def content_ru(v):
                 "Когда вы уходите со станции, доигравшей до конца, она снова ждёт в начале."]),
         ("p", "Так из нескольких 1-SHOT станций получается «плейлист с переключением радио»: каждая доигрывает и сама "
               "передаёт эфир следующей."),
+        ("h2", "Строка ПЕРЕХОД"),
+        ("table", ["Регулятор", "Что делает"], [
+            ["ПАУЗА (0–5 с)", "Сколько ждать после окончания станции 1-SHOT, прежде чем приёмник начнёт искать следующую. "
+                              "0 — переключение сразу. Скорость самого перелистывания задаёт СКОРОСТЬ в строке ПОИСК."],
+            ["ШУМ ПЕРЕХОДА (0–100 %)", "Громкость шума во время паузы и поиска. 100 % — как в настоящем радио, 0 % — "
+                                       "тихое переключение; следующая станция звучит в полную громкость."],
+            ["ЗАЩИТА АВТОМАТИЗАЦИИ", "Не записывать результат поиска в Tune (см. раздел 6)."],
+        ], [0.3, 0.7]),
+        ("p", "Доигравшая станция не обрывается, а «вещает тишину», пока стрелка не уйдёт с неё, поэтому шум нарастает плавно, "
+              "по мере движения ручки через шумовую зону, без резкого всплеска."),
         ("note", "LOCK и СКАН не дают автопоиску сдвинуть частоту. СТОП отменяет начавшийся автопоиск."),
 
         ("h1", "8. Редактор файла станции", "break"),
@@ -474,6 +491,15 @@ def content_ru(v):
             ["ШУМОВАЯ ЗОНА", "20 кГц–3 МГц", "См. раздел 9."],
         ], [0.2, 0.18, 0.62]),
 
+        ("h2", "Цвет шума"),
+        ("p", "Строка **ЦВЕТ ШУМА** под кнопками меняет характер шипения. Она действует пропорционально «зашумлённости» "
+              "сигнала: между станциями и на слабом приёме — полностью, на чистой станции — никак, музыка не меняется."),
+        ("table", ["Ползунок", "Диапазон", "Что делает"], [
+            ["ТОН", "−100…+100", "Влево — глухой, тёмный шум; вправо — звонкий, яркий (наклон ±12 дБ вокруг 1 кГц)."],
+            ["ЧАСТОТА", "200 Гц–10 кГц", "Где подчёркивается шум. Работает вместе с РЕЗКОСТЬЮ."],
+            ["РЕЗКОСТЬ", "0–100 %", "Насколько резко и «свистяще» шум звучит на ЧАСТОТЕ: подъём до +15 дБ узкой полосой."],
+        ], [0.2, 0.18, 0.62]),
+
         ("h1", "11. Приёмник и табло", "break"),
         ("img", "manual_{lang}_main.jpg", "rx", 0.75, None),
         ("table", ["Элемент", "Что делает"], [
@@ -498,8 +524,8 @@ def content_ru(v):
                 "Столбики — S-метр (сила сигнала), справа — отношение сигнал/шум (SNR) и поправка AFC."]),
 
         ("h1", "12. Пресеты", "break"),
-        ("p", "Пресет задаёт характер эфира и приёмника: шум, замирания, зоны, фильтры, динамик, AFC. **Станции, частота, "
-              "MUTE и щелчки пресетом не меняются** — можно листать пресеты, не теряя своих файлов."),
+        ("p", "Пресет задаёт характер эфира и приёмника: шум и его цвет, замирания, зоны, фильтры, динамик, AFC. **Станции, частота, "
+              "MUTE, щелчки и строка ПЕРЕХОД пресетом не меняются** — можно листать пресеты, не теряя своих файлов."),
         ("ul", ["Стрелки ◀ ▶ в шапке листают пресеты по кругу; клик по имени — полный список.",
                 "Звёздочка после имени (`NIGHT DRIVE *`) — вы изменили что-то после загрузки пресета.",
                 "«Сохранить пресет…» — свой пресет; он появится в разделе «Мои» во всех проектах.",
@@ -543,6 +569,9 @@ def content_ru(v):
             ["Поиск не останавливается", "Возможно, все станции слишком слабые для текущего ШУМА — после полного круга ручка вернётся. "
                                          "Нажмите СТОП."],
             ["Окно помощи появляется снова", "Отметьте «Больше не показывать при запуске» в окне помощи."],
+            ["Автоматизация Tune сбрасывается (Ableton и др.)", "Включите ЗАЩИТА АВТОМАТИЗАЦИИ в строке ПЕРЕХОД."],
+            ["Резкий шум после окончания 1-SHOT", "Уменьшите ШУМ ПЕРЕХОДА или поднимите ШУМОДАВ; ТОН влево делает шум мягче."],
+            ["Нужно переключаться сразу, без паузы", "ПАУЗА в строке ПЕРЕХОД на 0, СКОРОСТЬ поиска повыше."],
             ["Высокая нагрузка на процессор", "Нагрузка растёт со станциями рядом со стрелкой. Разнесите частоты или выключите лишние станции."],
         ], [0.33, 0.67]),
 
@@ -630,7 +659,8 @@ def content_en(v):
                 "**Display** — frequency, station name (RDS), indicators, S-meter, SNR and AFC.",
                 "**Band display** — the stations, their reception zones and the tuning needle.",
                 "**Control strip** — SEARCH ◀ ▶, ±0.05 MHz steps, the TUNE slider, SCAN, STOP, LOCK, MUTE.",
-                "**SEARCH row** — search speed and sensitivity, button click volume.",
+                "**SEARCH, HAND-OVER and NOISE COLOUR rows** — search speed and sensitivity, button clicks; pause and noise "
+                "of the hand-over after a 1-SHOT, automation protection; tone, frequency and sharpness of the noise.",
                 "**Stations** — eight transmitters; click a mini waveform to open the file editor.",
                 "**Air · channel** — noise, fading, multipath, interference, drift and reception zones.",
                 "**Receiver** — IF filter, stereo, soft mute, hi-cut, speaker, output, demodulator and de-emphasis."]),
@@ -700,6 +730,11 @@ def content_en(v):
         ("p", "Every knob and switch is a plug-in parameter your DAW can automate. The most fun is **Tune**: draw an envelope and "
               "the needle sweeps the band along it, through noise and neighbouring stations. Search results are written back to "
               "Tune too, so the DAW always shows what you hear."),
+        ("h2", "Keeping your automation"),
+        ("p", "Many DAWs (Ableton Live, for example) switch recorded automation off as soon as a plug-in changes the parameter by "
+              "itself. So if Tune is automated, turn on **KEEP TUNE AUTOMATION** in the HAND-OVER row: search, scan, the 1-SHOT "
+              "hand-over, LOCK and double STOP stop writing the frequency to Tune. Sound and display work as usual, and the Tune "
+              "knob in your DAW stays as your automation draws it. As soon as the automation moves Tune, the receiver follows."),
 
         ("h1", "7. LOOP and 1-SHOT", "break"),
         ("h2", "LOOP"),
@@ -713,6 +748,16 @@ def content_en(v):
                 "other stations, the same one plays again.",
                 "When you tune away from a finished station, it waits at its start again."]),
         ("p", "A few 1-SHOT stations make a \"playlist with radio switching\": each plays to the end and hands the air to the next."),
+        ("h2", "HAND-OVER row"),
+        ("table", ["Control", "What it does"], [
+            ["PAUSE (0–5 s)", "How long to wait after a 1-SHOT station ends before the receiver searches for the next one. "
+                              "0 — switch at once. The sweep itself is as fast as SPEED in the SEARCH row."],
+            ["HAND-OVER NOISE (0–100 %)", "Loudness of the noise during the pause and the search. 100 % — like a real radio, "
+                                          "0 % — a silent switch; the next station plays at full level."],
+            ["KEEP TUNE AUTOMATION", "Do not write the search result to Tune (see section 6)."],
+        ], [0.3, 0.7]),
+        ("p", "A finished station is not cut off: it keeps broadcasting silence until the needle leaves it, so the noise rises "
+              "smoothly as the dial moves through the noise zone, without a sudden burst."),
         ("note", "LOCK and SCAN keep the automatic search from moving the frequency. STOP cancels an automatic search in progress."),
 
         ("h1", "8. Station file editor", "break"),
@@ -761,6 +806,15 @@ def content_en(v):
             ["NOISE ZONE", "20 kHz–3 MHz", "See section 9."],
         ], [0.2, 0.18, 0.62]),
 
+        ("h2", "Noise colour"),
+        ("p", "The **NOISE COLOUR** row under the buttons changes the character of the hiss. It acts in proportion to how noisy "
+              "the signal is: fully between stations and on weak reception, not at all on a clean station — the music does not change."),
+        ("table", ["Slider", "Range", "What it does"], [
+            ["TONE", "−100…+100", "Left — dull, dark noise; right — bright, crisp noise (±12 dB tilt around 1 kHz)."],
+            ["FREQUENCY", "200 Hz–10 kHz", "Where the noise is emphasised. Works together with SHARPNESS."],
+            ["SHARPNESS", "0–100 %", "How sharp and whistling the noise sounds at FREQUENCY: up to +15 dB in a narrow band."],
+        ], [0.2, 0.18, 0.62]),
+
         ("h1", "11. Receiver and display", "break"),
         ("img", "manual_{lang}_main.jpg", "rx", 0.75, None),
         ("table", ["Control", "What it does"], [
@@ -785,8 +839,8 @@ def content_en(v):
                 "Bars — S-meter (signal strength); on the right — signal-to-noise ratio (SNR) and the AFC correction."]),
 
         ("h1", "12. Presets", "break"),
-        ("p", "A preset sets the character of the air and the receiver: noise, fading, zones, filters, speaker, AFC. **Stations, "
-              "frequency, MUTE and clicks are not changed by presets** — browse freely without losing your files."),
+        ("p", "A preset sets the character of the air and the receiver: noise and its colour, fading, zones, filters, speaker, AFC. **Stations, "
+              "frequency, MUTE, clicks and the HAND-OVER row are not changed by presets** — browse freely without losing your files."),
         ("ul", ["The ◀ ▶ arrows in the header step through presets; click the name for the full list.",
                 "A star after the name (`NIGHT DRIVE *`) means you changed something after loading the preset.",
                 "Save preset… stores your own; it appears under User in every project.",
@@ -827,6 +881,9 @@ def content_en(v):
             ["Search skips a station", "Raise SENSITIVITY or the station's power; lower NOISE."],
             ["Search does not stop", "All stations may be too weak for the current NOISE — after a full circle the dial returns. Press STOP."],
             ["The help keeps appearing", "Tick Don't show at startup in the help window."],
+            ["Tune automation gets switched off (Ableton etc.)", "Turn on KEEP TUNE AUTOMATION in the HAND-OVER row."],
+            ["A harsh noise after a 1-SHOT ends", "Lower HAND-OVER NOISE or raise SOFT MUTE; TONE to the left makes the hiss softer."],
+            ["Switch at once, without a pause", "Set PAUSE in the HAND-OVER row to 0 and raise the search SPEED."],
             ["High CPU", "Load grows with the number of stations near the needle. Spread frequencies apart or turn off unused stations."],
         ], [0.33, 0.67]),
 
@@ -866,6 +923,12 @@ PARAMS = [
     ("Search Speed", "0–100 %", "строка ПОИСК", "SEARCH row"),
     ("Search Sensitivity", "0–100 %", "строка ПОИСК", "SEARCH row"),
     ("Button Clicks", "0–100 %", "строка ПОИСК", "SEARCH row"),
+    ("Hand-over Delay", "0–5 s", "строка ПЕРЕХОД: ПАУЗА", "HAND-OVER row: PAUSE"),
+    ("Hand-over Noise", "0–100 %", "строка ПЕРЕХОД: ШУМ ПЕРЕХОДА", "HAND-OVER row: HAND-OVER NOISE"),
+    ("Keep Tune Automation", "on / off", "строка ПЕРЕХОД: ЗАЩИТА АВТОМАТИЗАЦИИ", "HAND-OVER row: KEEP TUNE AUTOMATION"),
+    ("Noise Tone", "−100…+100", "строка ЦВЕТ ШУМА: ТОН", "NOISE COLOUR row: TONE"),
+    ("Noise Frequency", "200 Hz–10 kHz", "строка ЦВЕТ ШУМА: ЧАСТОТА", "NOISE COLOUR row: FREQUENCY"),
+    ("Noise Sharpness", "0–100 %", "строка ЦВЕТ ШУМА: РЕЗКОСТЬ", "NOISE COLOUR row: SHARPNESS"),
     ("Station N On", "on / off", "станция N: ON", "station N: ON"),
     ("Station N Frequency", "87.5–108 MHz", "станция N: MHz", "station N: MHz"),
     ("Station N TX Level", "−60…0 dB", "станция N: dB", "station N: dB"),

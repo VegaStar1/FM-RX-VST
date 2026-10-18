@@ -23,6 +23,8 @@ namespace fmrx
         pDrift_ = p(params::drift); pClean_ = p(params::cleanZone); pNoiseZone_ = p(params::noiseZone);
         pMute_ = p(params::mute); pClickVol_ = p(params::clickVol); pSeekSpeed_ = p(params::seekSpeed);
         pSeekSens_ = p(params::seekSens);
+        pHoDelay_ = p(params::hoDelay); pHoNoise_ = p(params::hoNoise); pKeepAuto_ = p(params::keepAuto);
+        pNTone_ = p(params::nTone); pNFreq_ = p(params::nFreq); pNReso_ = p(params::nReso);
         for (int i = 0; i < kNumStations; ++i)
             sp_[(size_t) i] = { p(params::st(i, "on")), p(params::st(i, "freq")), p(params::st(i, "level")),
                                 p(params::st(i, "stereo")), p(params::st(i, "src")), p(params::st(i, "mode")) };
@@ -54,6 +56,8 @@ namespace fmrx
         for (auto& pl : players_) pl.reset();
         for (auto& p : playPos_) p.store(-1);
         muteKnown_ = false;
+        hoGain_ = 1.f;
+        hoK_ = (float) (1.0 - std::exp(-1.0 / (0.06 * sampleRate)));   // ~60 мс: шум перехода без рывков
         setLatencySamples(band_.latencySamples());
     }
 
@@ -71,6 +75,9 @@ namespace fmrx
         b.cleanZoneHz = pClean_->load() * 1000.f;
         b.noiseZoneHz = pNoiseZone_->load() * 1000.f;
         b.mute = pMute_->load() > 0.5f;
+        b.noiseTone = pNTone_->load();
+        b.noiseFreqHz = pNFreq_->load();
+        b.noiseReso = pNReso_->load();
         b.rx.ifBandwidthHz = pIfBw_->load() * 1000.f;
         b.rx.demod = pDemod_->load() > 0.5f ? dsp::DemodType::Pll : dsp::DemodType::Quadrature;
         const int de = (int) pDeemph_->load();
@@ -123,6 +130,8 @@ namespace fmrx
         cp.noiseZoneHz = band.noiseZoneHz;
         cp.speed = pSeekSpeed_->load();
         cp.sensitivity = pSeekSens_->load();
+        cp.endDelaySec = pHoDelay_->load();
+        const float hoNoise = pHoNoise_->load();
         std::array<ControlStation, kNumStations> cs {};
         for (int i = 0; i < kNumStations; ++i)
         {
@@ -176,12 +185,22 @@ namespace fmrx
                     playPos_[si].store(b != nullptr && ! pl.parked() && ! pl.ended() ? pl.position() : -1, std::memory_order_relaxed);
                     chans[i][0] = stScratch_[si][0].data(); chans[i][1] = stScratch_[si][1].data();
                 }
-                eff[si].on = cs[si].usable && control_.carrierOn(i);   // пустой слот / доигравший one-shot - без несущей
+                eff[si].on = cs[si].usable && control_.carrierOn(i);   // пустой слот - без несущей
                 perStation[i] = chans[i];
             }
 
             band.tuneMHz = control_.tuneTarget();
             band_.process(perStation, out_[0].data(), out_[1].data(), n, band, eff);
+
+            // Автопереход после 1-SHOT: пауза и поиск звучат с громкостью «Шум перехода».
+            const float hoTarget = control_.handoverActive() ? hoNoise : 1.f;
+            if (std::fabs(hoGain_ - hoTarget) > 1e-5f || hoTarget < 0.99999f)
+                for (int k = 0; k < n; ++k)
+                {
+                    hoGain_ += hoK_ * (hoTarget - hoGain_);
+                    out_[0][(size_t) k] *= hoGain_;
+                    out_[1][(size_t) k] *= hoGain_;
+                }
 
             // Щелчки кнопок - поверх выхода (слышны и при включении MUTE).
             if (click_.active())
@@ -199,9 +218,12 @@ namespace fmrx
 
     // message-поток, 20 Гц: результат поиска/LOCK записывается в параметр частоты (ручка и автоматизация видят
     // то, что слышно), раз в ~0.5 с освобождаются старые снимки станций.
+    // «Защита автоматизации» (Keep Tune Automation): плагин сам никогда не пишет в Tune - иначе DAW (Ableton и др.)
+    // считает это движением ручки и отключает записанную автоматизацию. Слышно то же, ручка DAW остаётся как была.
     void FmRxProcessor::timerCallback()
     {
         if (++timerTicks_ >= 10) { timerTicks_ = 0; stations_.reclaim(); }
+        if (pKeepAuto_->load() > 0.5f) return;
         const int s = control_.state();
         using S = RadioControl::State;
         if (control_.owned() && (s == (int) S::Idle || s == (int) S::Dwell || s == (int) S::Locked))

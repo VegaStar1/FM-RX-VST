@@ -161,7 +161,8 @@ static void testOneShot()
 
     s.c.notifyEnded(1);
     s.blocks(2);
-    CHECK(s.c.slotState(1) == RadioControl::Slot::Done && ! s.c.carrierOn(1), "finished one-shot goes off air");
+    CHECK(s.c.slotState(1) == RadioControl::Slot::Done && s.c.carrierOn(1), "finished one-shot keeps a silent carrier (no hiss burst)");
+    CHECK(s.c.handoverActive(), "hand-over pause is active right after the end");
     s.seconds(8.0);
     std::printf("  after end: %.3f MHz\n", s.c.tuneTarget());
     CHECK(std::fabs(s.c.tuneTarget() - 103.f) < 0.002f, "auto-search finds the next station up");
@@ -171,6 +172,23 @@ static void testOneShot()
     s.c.notifyEnded(2);
     s.seconds(10.0);
     CHECK(std::fabs(s.c.tuneTarget() - 90.f) < 0.002f, "auto-search wraps to the next one");
+
+    // Пауза перед автопоиском регулируется.
+    for (float delay : { 0.f, 2.f })
+    {
+        Sim d;
+        d.p.endDelaySec = delay;
+        d.st = stations({ { 90.0, -6.f }, { 96.0, -6.f } }, true);
+        d.p.tuneParam = 90.f; d.blocks(3);
+        d.c.notifyEnded(0);
+        int blocksBeforeMove = 0;
+        while (blocksBeforeMove < 2000 && std::fabs(d.c.tuneTarget() - 90.f) < 1e-4f) { d.blocks(1); ++blocksBeforeMove; }
+        const double waited = blocksBeforeMove * (double) kBlock / kFs;
+        std::printf("  hand-over delay %.1f s -> dial starts moving after %.2f s\n", delay, waited);
+        CHECK(std::fabs(waited - delay) < 0.05, "hand-over delay %.1f s respected", delay);
+        d.seconds(6.0);
+        CHECK(std::fabs(d.c.tuneTarget() - 96.f) < 0.002f && ! d.c.handoverActive(), "hand-over finishes on the next station");
+    }
 
     Sim solo;
     solo.st = stations({ { 99.0, -6.f } }, true);

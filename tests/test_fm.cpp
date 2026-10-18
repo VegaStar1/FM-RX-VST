@@ -191,6 +191,57 @@ static void testMute()
     CHECK(rms(r.out.l, fs, 0.1, 1.0) == 0.0, "mute silences everything, hiss included");
 }
 
+// Цвет шума: между станциями меняет спектр шипения, на чистой станции звук не меняется.
+static double bandEnergy(const std::vector<float>& x, double fs, double lo, double hi, double from, double to)
+{
+    // Простая оценка: энергия после полосового фильтра (два звена).
+    dsp::Biquad h1, h2, l1, l2;
+    h1.setCoeffs(dsp::BiquadCoeffs::highpass(fs, lo, 0.7071)); h2.setCoeffs(dsp::BiquadCoeffs::highpass(fs, lo, 0.7071));
+    l1.setCoeffs(dsp::BiquadCoeffs::lowpass(fs, hi, 0.7071));  l2.setCoeffs(dsp::BiquadCoeffs::lowpass(fs, hi, 0.7071));
+    double e = 0; long long n = 0;
+    for (size_t i = 0; i < x.size(); ++i)
+    {
+        const float y = l2.process(l1.process(h2.process(h1.process(x[i]))));
+        const double t = (double) i / fs;
+        if (t >= from && t < to) { e += (double) y * y; ++n; }
+    }
+    return n > 0 ? e / (double) n : 0.0;
+}
+
+static void testNoiseColour()
+{
+    std::printf("[noise colour]\n");
+    const double fs = 48000;
+    CHECK(FmBand::noiseWeight(50.f) == 0.f && FmBand::noiseWeight(0.f) == 1.f, "noise weight follows SNR");
+
+    auto band = cleanBand(100.0);
+    band.noiseDb = -40.f; band.rx.softMute = 0.f;
+    const auto st = oneStation(98.0, -6.f, true);             // стрелка далеко - только шум
+    auto dark = band;  dark.noiseTone = -1.f;
+    auto bright = band; bright.noiseTone = 1.f;
+    auto peak = band; peak.noiseFreqHz = 600.f; peak.noiseReso = 1.f;
+    const auto r0 = run(fs, band, st, {}, 1.5), rd = run(fs, dark, st, {}, 1.5), rb = run(fs, bright, st, {}, 1.5),
+               rp = run(fs, peak, st, {}, 1.5);
+    auto tilt = [&](const Run& r) { return 10.0 * std::log10(bandEnergy(r.out.l, fs, 3000, 8000, 0.5, 1.5) /
+                                                              std::max(1e-20, bandEnergy(r.out.l, fs, 150, 600, 0.5, 1.5))); };
+    const double t0 = tilt(r0), td = tilt(rd), tb = tilt(rb);
+    std::printf("  hiss HF/LF balance: neutral %.1f dB, dull %.1f dB, bright %.1f dB\n", t0, td, tb);
+    CHECK(td < t0 - 6.0 && tb > t0 + 6.0, "tone makes the hiss duller or brighter");
+    const double p0 = bandEnergy(r0.out.l, fs, 500, 720, 0.5, 1.5), pp = bandEnergy(rp.out.l, fs, 500, 720, 0.5, 1.5);
+    std::printf("  600 Hz band with sharpness 100%%: %+.1f dB\n", 10.0 * std::log10(pp / p0));
+    CHECK(pp > p0 * 4.0, "sharpness boosts the chosen noise frequency");
+
+    // Чистая станция: цвет шума не трогает музыку.
+    const auto sig = tone(fs, 1.5, 1000.0, 0.5f, 0.5f);
+    auto clean = cleanBand(98.0); clean.noiseDb = -90.f;
+    auto cleanBright = clean; cleanBright.noiseTone = 1.f; cleanBright.noiseReso = 1.f; cleanBright.noiseFreqHz = 1000.f;
+    const auto a = run(fs, clean, oneStation(98.0, -6.f, true), { &sig }, 1.5);
+    const auto b = run(fs, cleanBright, oneStation(98.0, -6.f, true), { &sig }, 1.5);
+    const auto fa = fitSine(a.out.l, fs, 1000.0, 0.8, 1.4), fb = fitSine(b.out.l, fs, 1000.0, 0.8, 1.4);
+    std::printf("  clean station: amp %.4f vs %.4f, noisiness %.2f\n", fa.amp, fb.amp, b.meters.noisiness);
+    CHECK(std::fabs(fb.amp / fa.amp - 1.0) < 0.02 && b.meters.noisiness < 0.05, "clean station unaffected by noise colour");
+}
+
 static void testCleanMono(double fs)
 {
     std::printf("[clean tone, fs=%.0f]\n", fs);
@@ -324,6 +375,7 @@ int main()
 {
     testZone();
     testMute();
+    testNoiseColour();
     testCleanMono(48000);
     testCleanMono(44100);
     testCleanMono(96000);

@@ -1,7 +1,8 @@
 # Выпуск версии FM RX
 
 ## Как выпустить
-1. Поднять версию в `CMakeLists.txt` (`project(FmRx VERSION X.Y.Z ...)`) и в `packaging/RELEASE_NOTES.md`.
+1. Поднять версию в `CMakeLists.txt` (`project(FmRx VERSION X.Y.Z ...)`) и обновить «Что нового» в
+   `packaging/RELEASE_NOTES.md` (`@VERSION@` подставляется сам; там же ссылки «Скачать» и шаги установки).
 2. Если менялся интерфейс или функции - обновить инструкцию:
    - снимки: собрать `-DFMRX_BUILD_CHECK=ON`, запустить `FmRxCheck <station.wav> <out>`, скопировать
      `manual_*.png` в `docs/manual/img/*.jpg`;
@@ -9,7 +10,9 @@
 3. Закоммитить и сделать push в `main`.
 4. GitHub Actions соберёт установщики, проверит их (pluginval, тестовая установка и удаление) и создаст или
    обновит **черновик** релиза `vX.Y.Z` с файлами:
-   `FM-RX-X.Y.Z-Windows-Setup.exe`, `FM-RX-X.Y.Z-macOS.pkg`, `FM-RX-X.Y.Z-Manual-EN.pdf`, `FM-RX-X.Y.Z-Manual-RU.pdf`.
+   `FM-RX-X.Y.Z-Windows.zip` и `FM-RX-X.Y.Z-macOS.zip` (установщик + обе PDF-инструкции + INSTALL.txt),
+   а также отдельно `FM-RX-X.Y.Z-Windows-Setup.exe`, `FM-RX-X.Y.Z-macOS.pkg` и PDF.
+   Ссылки «Скачать» в описании релиза начинают работать после публикации.
    Черновик видят только участники репозитория: скачайте файлы и загрузите их в магазин. Пока черновик не
    опубликован, каждый push в `main` обновляет его файлы. Когда опубликуете (Releases → Edit → Publish release;
    при этом создаётся тег `vX.Y.Z`), следующие push его не трогают - для новой версии поднимите номер.

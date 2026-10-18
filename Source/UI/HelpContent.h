@@ -64,7 +64,11 @@ namespace fmrx::ui::help
           "- LOCK - holds the frequency: the dial and search are ignored.\n"
           "- MUTE - silences the whole receiver, noise included.\n"
           "# SEARCH row\n"
-          "SPEED - how fast the dial moves, SENSITIVITY - whether search stops on weak stations, BUTTON CLICKS - volume of the mechanical clicks (0 - off).",
+          "SPEED - how fast the dial moves, SENSITIVITY - whether search stops on weak stations, BUTTON CLICKS - volume of the mechanical clicks (0 - off).\n"
+          "# HAND-OVER row (after a 1-SHOT)\n"
+          "- PAUSE - how long to wait after a 1-SHOT station ends before searching for the next one (0 - at once, up to 5 s).\n"
+          "- HAND-OVER NOISE - how loud the noise is while switching; 0 - a silent switch.\n"
+          "- KEEP TUNE AUTOMATION - search, scan and hand-over never write the TUNE parameter, so your DAW automation (e.g. in Ableton) is not switched off.",
           "# Шкала\n"
           "- Клик по пику станции - настройка на неё; клик по пустому месту - переход туда.\n"
           "- Перетаскивание - вращение ручки (Shift - точнее), колесо - шаг 50 кГц.\n"
@@ -76,7 +80,11 @@ namespace fmrx::ui::help
           "- LOCK - фиксирует частоту: ручка и поиск не действуют.\n"
           "- MUTE - полностью выключает приёмник, вместе с шумом.\n"
           "# Строка ПОИСК\n"
-          "СКОРОСТЬ - как быстро едет ручка, ЧУВСТВИТЕЛЬНОСТЬ - останавливаться ли на слабых станциях, ЩЕЛЧКИ КНОПОК - громкость механических щелчков (0 - выкл)." },
+          "СКОРОСТЬ - как быстро едет ручка, ЧУВСТВИТЕЛЬНОСТЬ - останавливаться ли на слабых станциях, ЩЕЛЧКИ КНОПОК - громкость механических щелчков (0 - выкл).\n"
+          "# Строка ПЕРЕХОД (после 1-SHOT)\n"
+          "- ПАУЗА - сколько ждать после окончания станции 1-SHOT, прежде чем искать следующую (0 - сразу, до 5 с).\n"
+          "- ШУМ ПЕРЕХОДА - громкость шума во время переключения; 0 - тихое переключение.\n"
+          "- ЗАЩИТА АВТОМАТИЗАЦИИ - поиск, скан и автопереход не пишут в параметр TUNE, и автоматизация в DAW (например, в Ableton) не отключается." },
 
         { "Station editor", "Редактор станции",
           "Trims the file without changing it on disk; the trim is saved with your project.\n"
@@ -107,7 +115,11 @@ namespace fmrx::ui::help
           "- IF BW - IF filter width: narrower - fewer neighbours, more distortion.\n"
           "- BLEND - how early stereo falls to mono on a weak signal. SOFT MUTE - hushes the hiss between stations. HI-CUT - treble cut on weak signals.\n"
           "- SPEAKER - small speaker colour. OUTPUT - output level.\n"
-          "- QUAD / PLL - demodulator type, 50 / 75 µs - de-emphasis, STEREO / MONO, AFC - automatic frequency control.",
+          "- QUAD / PLL - demodulator type, 50 / 75 µs - de-emphasis, STEREO / MONO, AFC - automatic frequency control.\n"
+          "# Noise colour\n"
+          "Shapes the hiss only - clean stations do not change; the noisier the signal, the stronger the effect.\n"
+          "- TONE - left: dull, right: bright.\n"
+          "- FREQUENCY and SHARPNESS - where the noise is emphasised and how sharp, whistling it sounds there.",
           "# Эфир · канал\n"
           "- ШУМ - уровень шума эфира. ЗАМИРАНИЯ и СКОРОСТЬ - глубина и скорость провалов сигнала.\n"
           "- ОТРАЖЕНИЯ - многолучёвость (искажения на провалах). ЩЕЛЧКИ - импульсные помехи. ДРЕЙФ - медленный уход частоты.\n"
@@ -116,7 +128,11 @@ namespace fmrx::ui::help
           "- ПОЛОСА ПЧ - ширина ПЧ-фильтра: уже - меньше соседей, но больше искажений.\n"
           "- БЛЕНД - как рано стерео уходит в моно на слабом сигнале. ШУМОДАВ - глушит шум между станциями. СРЕЗ ВЧ - срез верхов на слабом сигнале.\n"
           "- ДИНАМИК - окраска маленьким динамиком. ВЫХОД - выходной уровень.\n"
-          "- QUAD / PLL - тип демодулятора, 50 / 75 мкс - деэмфазис, STEREO / MONO, AFC - автоподстройка частоты." },
+          "- QUAD / PLL - тип демодулятора, 50 / 75 мкс - деэмфазис, STEREO / MONO, AFC - автоподстройка частоты.\n"
+          "# Цвет шума\n"
+          "Меняет только шипение - чистые станции не меняются; чем больше шума в сигнале, тем сильнее действие.\n"
+          "- ТОН - влево глухо, вправо звонко.\n"
+          "- ЧАСТОТА и РЕЗКОСТЬ - где подчёркивается шум и насколько резко, «свистяще» он там звучит." },
 
         { "Presets and settings", "Пресеты и настройки",
           "# Presets\n"

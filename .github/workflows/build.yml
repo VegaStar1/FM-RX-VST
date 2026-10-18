@@ -114,10 +114,25 @@ jobs:
           Start-Sleep -Seconds 3
           if (Test-Path "C:\Program Files\Common Files\VST3\FM RX.vst3") { throw "uninstall left the plug-in" }
           Write-Host "uninstalled OK"
+      - name: Archive (installer + manuals + INSTALL.txt)
+        shell: pwsh
+        run: |
+          $v = $env:FMRX_VERSION
+          $d = "zip\FM-RX-$v-Windows"
+          New-Item -ItemType Directory -Force $d | Out-Null
+          Copy-Item "dist\FM-RX-$v-Windows-Setup.exe" $d
+          Copy-Item "docs\manual\FM RX Manual RU.pdf" "$d\FM-RX-$v-Manual-RU.pdf"
+          Copy-Item "docs\manual\FM RX Manual EN.pdf" "$d\FM-RX-$v-Manual-EN.pdf"
+          $txt = [IO.File]::ReadAllText("$PWD\packaging\INSTALL.txt").Replace('@VERSION@', $v)
+          [IO.File]::WriteAllText("$PWD\$d\INSTALL.txt", $txt, (New-Object System.Text.UTF8Encoding($true)))
+          Compress-Archive -Path $d -DestinationPath "dist\FM-RX-$v-Windows.zip" -Force
+          Get-ChildItem dist
       - uses: actions/upload-artifact@v4
         with:
           name: FM-RX-windows-installer
-          path: dist/*.exe
+          path: |
+            dist/*.exe
+            dist/*.zip
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
@@ -180,10 +195,22 @@ jobs:
           codesign --verify --strict "/Library/Audio/Plug-Ins/VST3/FM RX.vst3"
           ./pluginval.app/Contents/MacOS/pluginval --strictness-level 2 --validate "/Library/Audio/Plug-Ins/VST3/FM RX.vst3"
           echo "installed OK"
+      - name: Archive (installer + manuals + INSTALL.txt)
+        run: |
+          D="zip/FM-RX-$FMRX_VERSION-macOS"
+          mkdir -p "$D"
+          cp "dist/FM-RX-$FMRX_VERSION-macOS.pkg" "$D/"
+          cp "docs/manual/FM RX Manual RU.pdf" "$D/FM-RX-$FMRX_VERSION-Manual-RU.pdf"
+          cp "docs/manual/FM RX Manual EN.pdf" "$D/FM-RX-$FMRX_VERSION-Manual-EN.pdf"
+          sed "s/@VERSION@/$FMRX_VERSION/g" packaging/INSTALL.txt > "$D/INSTALL.txt"
+          (cd zip && ditto -c -k --sequesterRsrc --keepParent "FM-RX-$FMRX_VERSION-macOS" "../dist/FM-RX-$FMRX_VERSION-macOS.zip")
+          unzip -l "dist/FM-RX-$FMRX_VERSION-macOS.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: FM-RX-macos-installer
-          path: dist/*.pkg
+          path: |
+            dist/*.pkg
+            dist/*.zip
           if-no-files-found: error
 
   release:
@@ -213,10 +240,11 @@ jobs:
           ls -la dist
           # Черновики не находятся по тегу - ищем в списке.
           STATE=$(gh release list --limit 100 --json tagName,isDraft --jq ".[] | select(.tagName==\"$TAG\") | if .isDraft then \"draft\" else \"published\" end")
+          sed "s/@VERSION@/$V/g" packaging/RELEASE_NOTES.md > "$RUNNER_TEMP/notes.md"
           case "$STATE" in
-            "")        gh release create "$TAG" dist/* --draft --target "$GITHUB_SHA" --title "FM RX $V" --notes-file packaging/RELEASE_NOTES.md
+            "")        gh release create "$TAG" dist/* --draft --target "$GITHUB_SHA" --title "FM RX $V" --notes-file "$RUNNER_TEMP/notes.md"
                        echo "::notice::draft release $TAG created" ;;
-            draft)     gh release edit "$TAG" --target "$GITHUB_SHA" --notes-file packaging/RELEASE_NOTES.md
+            draft)     gh release edit "$TAG" --target "$GITHUB_SHA" --notes-file "$RUNNER_TEMP/notes.md"
                        gh release upload "$TAG" dist/* --clobber
                        echo "::notice::draft release $TAG updated" ;;
             *)         echo "::notice::release $TAG is already published - bump the version for a new release" ;;

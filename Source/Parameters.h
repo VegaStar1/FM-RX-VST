@@ -31,6 +31,14 @@ namespace fmrx::params
     inline constexpr const char* clickVol  = "clickvol";
     inline constexpr const char* seekSpeed = "seekspeed";
     inline constexpr const char* seekSens  = "seeksens";
+    // переход после 1-SHOT и автоматизация
+    inline constexpr const char* hoDelay   = "handoverdelay";
+    inline constexpr const char* hoNoise   = "handovernoise";
+    inline constexpr const char* keepAuto  = "keepauto";
+    // цвет шума
+    inline constexpr const char* nTone     = "noisetone";
+    inline constexpr const char* nFreq     = "noisefreq";
+    inline constexpr const char* nReso     = "noisereso";
 
     enum class Source { File = 0, Input = 1 };
     enum class Mode { Loop = 0, OneShot = 1 };
@@ -101,6 +109,29 @@ namespace fmrx::params
         layout.add(std::make_unique<AudioParameterFloat>(ParameterID { seekSpeed, 1 }, "Search Speed", NormalisableRange<float>(0.f, 1.f), 0.5f,
             AudioParameterFloatAttributes().withStringFromValueFunction(pct)));
         layout.add(std::make_unique<AudioParameterFloat>(ParameterID { seekSens, 1 }, "Search Sensitivity", NormalisableRange<float>(0.f, 1.f), 0.5f,
+            AudioParameterFloatAttributes().withStringFromValueFunction(pct)));
+
+        layout.add(std::make_unique<AudioParameterFloat>(ParameterID { hoDelay, 1 }, "Hand-over Delay",
+            NormalisableRange<float>(0.f, 5.f, 0.01f, 0.5f), 0.45f,
+            AudioParameterFloatAttributes().withLabel("s")
+                .withStringFromValueFunction([](float v, int) { return String(v, 2) + " s"; })));
+        layout.add(std::make_unique<AudioParameterFloat>(ParameterID { hoNoise, 1 }, "Hand-over Noise", NormalisableRange<float>(0.f, 1.f), 0.6f,
+            AudioParameterFloatAttributes().withStringFromValueFunction(pct)));
+        layout.add(std::make_unique<AudioParameterBool>(ParameterID { keepAuto, 1 }, "Keep Tune Automation", false));
+
+        layout.add(std::make_unique<AudioParameterFloat>(ParameterID { nTone, 1 }, "Noise Tone", NormalisableRange<float>(-1.f, 1.f), 0.f,
+            AudioParameterFloatAttributes().withStringFromValueFunction([](float v, int)
+            {
+                const int p = juce::roundToInt(v * 100.f);
+                return p == 0 ? String("0") : (p > 0 ? "+" + String(p) : String(p));
+            })));
+        layout.add(std::make_unique<AudioParameterFloat>(ParameterID { nFreq, 1 }, "Noise Frequency",
+            NormalisableRange<float>(200.f, 10000.f, 1.f, 0.35f), 2500.f,
+            AudioParameterFloatAttributes().withLabel("Hz").withStringFromValueFunction([](float v, int)
+            {
+                return v >= 1000.f ? String(v / 1000.f, 1) + " kHz" : String(juce::roundToInt(v)) + " Hz";
+            })));
+        layout.add(std::make_unique<AudioParameterFloat>(ParameterID { nReso, 1 }, "Noise Sharpness", NormalisableRange<float>(0.f, 1.f), 0.f,
             AudioParameterFloatAttributes().withStringFromValueFunction(pct)));
 
         for (int i = 0; i < kNumStations; ++i)

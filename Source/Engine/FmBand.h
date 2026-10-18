@@ -39,6 +39,10 @@ namespace fmrx
         float  cleanZoneHz = 110000.f;  // половина ширины «чистой» зоны
         float  noiseZoneHz = 30000.f;   // ширина перехода «шум -> станция» с каждой стороны
         bool   mute = false;            // полное выключение выхода (с затуханием ~8 мс)
+        // цвет шума: действует пропорционально «зашумлённости» сигнала (по SNR), чистую станцию не трогает
+        float  noiseTone = 0.f;         // -1 глухой ... +1 звонкий (наклон ±12 дБ вокруг 1 кГц)
+        float  noiseFreqHz = 2500.f;    // центр резонансной полосы
+        float  noiseReso = 0.f;         // 0..1: резкость (подъём до +15 дБ, Q до 8)
         // приёмник
         dsp::ReceiverParams rx;
         double emphasisTau = 50e-6; // общий для передатчиков и приёмника
@@ -49,6 +53,7 @@ namespace fmrx
     struct BandMeters
     {
         float rssiDb = -120.f, snrDb = 0.f, stereo = 0.f, blend = 0.f;
+        float noisiness = 0.f;     // 0 - чистый приём, 1 - один шум (вес цвета шума)
         float afcHz = 0.f;
         double tunedMHz = 98.0;    // эффективная частота (с AFC и дрейфом)
         std::array<float, kNumStations> strength {};   // 0..1 сила станции в точке приёма (для спектра)
@@ -86,8 +91,16 @@ namespace fmrx
         }
         double maxOffsetHz() const noexcept { return maxOffset_; }
 
+        // Вес окраски шума по SNR: 1 при SNR <= 6 дБ, 0 при SNR >= 28 дБ (чистая функция).
+        static float noiseWeight(float snrDb) noexcept
+        {
+            const float t = (28.f - snrDb) / 22.f;
+            return t < 0.f ? 0.f : (t > 1.f ? 1.f : t);
+        }
+
     private:
         void updateSpeaker(float amount);
+        void updateNoiseColour(float tone, float freqHz, float reso);
 
         double hostFs_ = 48000.0, maxOffset_ = 140000.0;
         int os_ = 8, latency_ = 0;
@@ -110,8 +123,13 @@ namespace fmrx
         dsp::Biquad spkHp_[2], spkLp_[2];
         float outGain_ = 1.f, muteGain_ = 1.f, muteK_ = 0.01f;
 
+        // цвет шума
+        float ncTone_ = -9.f, ncFreq_ = -1.f, ncReso_ = -1.f, ncW_ = 0.f, ncK_ = 0.01f;
+        bool  ncActive_ = false;
+        dsp::Biquad ncLow_[2], ncHigh_[2], ncPeak_[2];
+
         // индикаторы
-        std::atomic<float> mRssi_ { -120.f }, mSnr_ { 0.f }, mStereo_ { 0.f }, mBlend_ { 0.f }, mAfc_ { 0.f };
+        std::atomic<float> mRssi_ { -120.f }, mSnr_ { 0.f }, mStereo_ { 0.f }, mBlend_ { 0.f }, mAfc_ { 0.f }, mNoisy_ { 0.f };
         std::atomic<double> mTuned_ { 98.0 };
         std::array<std::atomic<float>, kNumStations> mStrength_ {}, mActivity_ {};
     };

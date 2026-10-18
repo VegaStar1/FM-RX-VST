@@ -6,7 +6,7 @@ namespace fmrx
 
     namespace
     {
-        constexpr int kBaseW = 1180, kBaseH = 830, kMinW = 980, kMinH = 730;
+        constexpr int kBaseW = 1180, kBaseH = 900, kMinW = 980, kMinH = 790;
 
         void paintPanel(juce::Graphics& g, juce::Rectangle<int> r, const juce::String& title, const juce::String& hint)
         {
@@ -98,6 +98,7 @@ namespace fmrx
             addAndMakeVisible(r.slider);
             r.name.setFont(font(11.f, true));
             r.name.setJustificationType(juce::Justification::centredRight);
+            r.name.setMinimumHorizontalScale(0.7f);
             r.name.setInterceptsMouseClicks(false, false);
             addAndMakeVisible(r.name);
             r.att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(st, id, r.slider);
@@ -105,6 +106,15 @@ namespace fmrx
         rowSlider(seekSpeed_, params::seekSpeed, "row_speed", "tip_speed");
         rowSlider(seekSens_, params::seekSens, "row_sens", "tip_sens");
         rowSlider(clickVol_, params::clickVol, "row_clicks", "tip_clicks");
+        // --- строки «ПЕРЕХОД» и «ЦВЕТ ШУМА» ---
+        rowSlider(hoDelay_, params::hoDelay, "row_hodelay", "tip_hodelay");
+        rowSlider(hoNoise_, params::hoNoise, "row_honoise", "tip_honoise");
+        keepAuto_.setClickingTogglesState(true);
+        addAndMakeVisible(keepAuto_);
+        keepAutoAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(st, params::keepAuto, keepAuto_);
+        rowSlider(nTone_, params::nTone, "row_ntone", "tip_ntone");
+        rowSlider(nFreq_, params::nFreq, "row_nfreq", "tip_nfreq");
+        rowSlider(nReso_, params::nReso, "row_nreso", "tip_nreso");
 
         // --- эфир (две строки) и приёмник ---
         addKnob(noise_, params::noise, "k_noise", "t_noise", true);
@@ -205,7 +215,7 @@ namespace fmrx
         tuneSlider_.setColour(juce::Slider::trackColourId, col::line2);
         tuneSlider_.setColour(juce::Slider::backgroundColourId, col::line);
         tuneSlider_.setColour(juce::Slider::thumbColourId, col::amber);
-        for (auto* r : { &seekSpeed_, &seekSens_, &clickVol_ })
+        for (auto* r : rowSliders())
         {
             r->slider.setColour(juce::Slider::trackColourId, col::amber);
             r->slider.setColour(juce::Slider::backgroundColourId, col::line);
@@ -245,7 +255,9 @@ namespace fmrx
         presetName_.setTooltip(tr("preset"));
         demod_.setTooltip(tr("t_demod"));
         deemph_.setTooltip(tr("t_deemph"));
-        for (auto* r : { &seekSpeed_, &seekSens_, &clickVol_ })
+        keepAuto_.setButtonText(tr("row_keepauto"));
+        keepAuto_.setTooltip(tr("tip_keepauto"));
+        for (auto* r : rowSliders())
         {
             r->name.setText(tr(r->key), juce::dontSendNotification);
             r->slider.setTooltip(tr(r->tip));
@@ -378,13 +390,19 @@ namespace fmrx
         g.setColour(col::dim);
         g.drawText(tr("subtitle") + juce::String::fromUTF8("  \xc2\xb7  by NUWMUN"), top.removeFromLeft(330), juce::Justification::centredLeft);
 
-        g.setColour(col::panel);
-        g.fillRoundedRectangle(searchRow_.toFloat(), 8.f);
-        g.setColour(col::line);
-        g.drawRoundedRectangle(searchRow_.toFloat().reduced(0.5f), 8.f, 1.f);
-        g.setFont(font(11.f, true));
-        g.setColour(col::dim);
-        g.drawText(tr("row_search"), searchRow_.withTrimmedLeft(14).withWidth(80), juce::Justification::centredLeft);
+        auto paintRow = [&g](juce::Rectangle<int> row, const juce::String& title)
+        {
+            g.setColour(col::panel);
+            g.fillRoundedRectangle(row.toFloat(), 8.f);
+            g.setColour(col::line);
+            g.drawRoundedRectangle(row.toFloat().reduced(0.5f), 8.f, 1.f);
+            g.setFont(font(11.f, true));
+            g.setColour(col::dim);
+            g.drawFittedText(title, row.withTrimmedLeft(14).withWidth(84), juce::Justification::centredLeft, 1, 0.7f);
+        };
+        paintRow(searchRow_, tr("row_search"));
+        paintRow(handoverRow_, tr("row_handover"));
+        paintRow(colourRow_, tr("row_colour"));
 
         paintPanel(g, stationsArea_, tr("stations"), stationEditor_.isVisible() ? juce::String() : tr("stations_hint"));
         paintPanel(g, airArea_, tr("air"), tr("air_hint"));
@@ -428,20 +446,39 @@ namespace fmrx
         tuneSlider_.setBounds(strip.reduced(8, 4));
         r.removeFromTop(8);
 
-        searchRow_ = r.removeFromTop(30);
+        // Три строки ползунков: ПОИСК, ПЕРЕХОД, ЦВЕТ ШУМА - по три ячейки «имя + ползунок».
+        auto layoutRow = [](juce::Rectangle<int> rowArea, std::initializer_list<juce::Component*> items)
         {
-            auto row = searchRow_.reduced(10, 3).withTrimmedLeft(84);
+            auto row = rowArea.reduced(10, 3).withTrimmedLeft(96);
             const int cell = row.getWidth() / 3;
-            const int nameW[3] = { 80, 130, 120 };
-            int i = 0;
-            for (auto* rs : { &seekSpeed_, &seekSens_, &clickVol_ })
+            for (auto* c : items)
             {
-                auto c = row.removeFromLeft(cell);
-                rs->name.setBounds(c.removeFromLeft(nameW[i++]));
-                c.removeFromLeft(8);
-                rs->slider.setBounds(c.withTrimmedRight(16));
+                auto cl = row.removeFromLeft(cell);
+                if (auto* rs = dynamic_cast<juce::Slider*>(c)) { rs->setBounds(cl.withTrimmedLeft(cl.getWidth() * 40 / 100 + 8).withTrimmedRight(16)); continue; }
+                c->setBounds(cl.withTrimmedRight(16).reduced(0, 1));
             }
-        }
+        };
+        auto placeNames = [](juce::Rectangle<int> rowArea, std::initializer_list<juce::Label*> names)
+        {
+            auto row = rowArea.reduced(10, 3).withTrimmedLeft(96);
+            const int cell = row.getWidth() / 3;
+            for (auto* n : names)
+            {
+                auto cl = row.removeFromLeft(cell);
+                if (n != nullptr) n->setBounds(cl.withWidth(cl.getWidth() * 40 / 100));
+            }
+        };
+        searchRow_ = r.removeFromTop(30);
+        layoutRow(searchRow_, { &seekSpeed_.slider, &seekSens_.slider, &clickVol_.slider });
+        placeNames(searchRow_, { &seekSpeed_.name, &seekSens_.name, &clickVol_.name });
+        r.removeFromTop(6);
+        handoverRow_ = r.removeFromTop(30);
+        layoutRow(handoverRow_, { &hoDelay_.slider, &hoNoise_.slider, &keepAuto_ });
+        placeNames(handoverRow_, { &hoDelay_.name, &hoNoise_.name, nullptr });
+        r.removeFromTop(6);
+        colourRow_ = r.removeFromTop(30);
+        layoutRow(colourRow_, { &nTone_.slider, &nFreq_.slider, &nReso_.slider });
+        placeNames(colourRow_, { &nTone_.name, &nFreq_.name, &nReso_.name });
         r.removeFromTop(10);
 
         stationsArea_ = r.removeFromLeft(r.getWidth() * 57 / 100);
