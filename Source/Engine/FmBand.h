@@ -2,8 +2,10 @@
 // FmBand - весь FM-диапазон: 8 передатчиков -> эфир -> приёмник. Чистый C++ (без JUCE): тестируется отдельно.
 //
 // Модель: эфир считается в комплексной полосе шириной Fs_air (~384 кГц) вокруг частоты настройки.
-// Станция участвует, только если её спектр не «заворачивается» в полосу ПЧ (|отстройка| < ~140 кГц);
-// дальние станции не считаются вовсе - звук у них продолжает идти, но DSP не тратится.
+// Зона приёма станции (регулируется): в «чистой» зоне несущая приходит полностью, в «шумовой» её уровень
+// плавно падает (до -80 дБ) и станция тонет в шуме эфира. Если зона шире, чем помещается в полосу эфира,
+// отстройка масштабируется (станция остаётся внутри ПЧ, характер расстройки сохраняется, но мягче).
+// Станции вне зоны не считаются вовсе - звук у них продолжает идти, но DSP не тратится.
 #include "Dsp/AirChannel.h"
 #include "Dsp/FmTransmitter.h"
 #include "Dsp/Receiver.h"
@@ -33,6 +35,10 @@ namespace fmrx
         float  fadeRateHz = 1.f;
         float  multipath = 0.f;    // 0..1
         float  impulse = 0.f;      // 0..1
+        // зона приёма станции
+        float  cleanZoneHz = 110000.f;  // половина ширины «чистой» зоны
+        float  noiseZoneHz = 30000.f;   // ширина перехода «шум -> станция» с каждой стороны
+        bool   mute = false;            // полное выключение выхода (с затуханием ~8 мс)
         // приёмник
         dsp::ReceiverParams rx;
         double emphasisTau = 50e-6; // общий для передатчиков и приёмника
@@ -65,8 +71,19 @@ namespace fmrx
         int oversampling() const noexcept { return os_; }
         double airRate() const noexcept { return hostFs_ * os_; }
 
-        // Вес станции по отстройке: 1 в центре, плавно -> 0 к краю зоны maxOffsetHz (чистая функция).
-        static float stationWeight(double offsetHz, double maxOffsetHz) noexcept;
+        // Уровень несущей станции в точке приёма в дБ по отстройке (0 в чистой зоне, до -80 на краю шумовой);
+        // <= kZoneOffDb - станции нет. Чистая функция: её же используют поиск и шкала UI.
+        static constexpr float kZoneOffDb = -80.f;
+        static float zoneGainDb(double offsetHz, double cleanHz, double noiseHz) noexcept
+        {
+            const double a = offsetHz < 0 ? -offsetHz : offsetHz;
+            cleanHz = cleanHz > 0.0 ? cleanHz : 0.0;
+            noiseHz = noiseHz > 1000.0 ? noiseHz : 1000.0;
+            if (a <= cleanHz) return 0.f;
+            if (a >= cleanHz + noiseHz) return kZoneOffDb;
+            const double t = (a - cleanHz) / noiseHz;
+            return (float) (kZoneOffDb * t * t * (3.0 - 2.0 * t));   // плавно у обоих краёв перехода
+        }
         double maxOffsetHz() const noexcept { return maxOffset_; }
 
     private:
@@ -91,7 +108,7 @@ namespace fmrx
         // динамик
         float speakerAmt_ = -1.f;
         dsp::Biquad spkHp_[2], spkLp_[2];
-        float outGain_ = 1.f;
+        float outGain_ = 1.f, muteGain_ = 1.f, muteK_ = 0.01f;
 
         // индикаторы
         std::atomic<float> mRssi_ { -120.f }, mSnr_ { 0.f }, mStereo_ { 0.f }, mBlend_ { 0.f }, mAfc_ { 0.f };

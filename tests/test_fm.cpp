@@ -150,15 +150,45 @@ namespace
     double dB(double ratio) { return 20.0 * std::log10(std::max(1e-12, ratio)); }
 }
 
-static void testWeight()
+static void testZone()
 {
-    std::printf("[weight]\n");
-    CHECK(FmBand::stationWeight(0.0, 144000.0) == 1.f, "center weight");
-    CHECK(FmBand::stationWeight(200000.0, 144000.0) == 0.f, "far weight");
-    const float mid = FmBand::stationWeight(129000.0, 144000.0);
-    CHECK(mid > 0.3f && mid < 0.7f, "fade zone %.3f", mid);
+    std::printf("[reception zone]\n");
+    CHECK(FmBand::zoneGainDb(0.0, 60000.0, 300000.0) == 0.f, "clean zone is full strength");
+    CHECK(FmBand::zoneGainDb(59000.0, 60000.0, 300000.0) == 0.f, "inside clean zone");
+    const float mid = FmBand::zoneGainDb(210000.0, 60000.0, 300000.0);
+    CHECK(mid < -30.f && mid > -50.f, "noise zone middle %.1f dB", mid);
+    CHECK(FmBand::zoneGainDb(400000.0, 60000.0, 300000.0) <= FmBand::kZoneOffDb, "outside the zone");
+    CHECK(FmBand::zoneGainDb(-210000.0, 60000.0, 300000.0) == mid, "symmetric");
     CHECK(dsp::chooseOversampling(44100) == 9 && dsp::chooseOversampling(48000) == 8 && dsp::chooseOversampling(96000) == 4,
           "oversampling choice");
+
+    // Широкая зона: станция слышна далеко от центра, но тонет в шуме по мере удаления.
+    const double fs = 48000;
+    const auto sig = tone(fs, 1.5, 1000.0, 0.5f, 0.5f);
+    auto band = cleanBand(98.0);
+    band.noiseDb = -60.f; band.cleanZoneHz = 200000.f; band.noiseZoneHz = 800000.f;
+    auto inClean = run(fs, band, oneStation(98.15, -6.f, true), { &sig }, 1.5);
+    band.tuneMHz = 98.0 - 0.55;                         // середина шумовой зоны
+    auto inNoise = run(fs, band, oneStation(98.0, -6.f, true), { &sig }, 1.5);
+    band.tuneMHz = 98.0 - 1.2;                          // за пределами зоны
+    auto outside = run(fs, band, oneStation(98.0, -6.f, true), { &sig }, 1.5);
+    const auto a = fitSine(inClean.out.l, fs, 1000.0, 0.8, 1.4), b = fitSine(inNoise.out.l, fs, 1000.0, 0.8, 1.4);
+    const auto c = fitSine(outside.out.l, fs, 1000.0, 0.8, 1.4);
+    std::printf("  wide zone: 150 kHz off THD+N %.2f%% | noise zone SNR %.1f dB THD+N %.1f%% | outside amp %.3f\n",
+                a.thdn * 100, inNoise.meters.snrDb, b.thdn * 100, c.amp);
+    CHECK(a.thdn < 0.05, "wide clean zone keeps it clean 150 kHz away");
+    CHECK(b.thdn > a.thdn * 3.0 && b.amp > 0.1, "noise zone: station emerges from the hiss");
+    CHECK(c.amp < 0.05, "outside the zone: no station");
+}
+
+static void testMute()
+{
+    std::printf("[mute]\n");
+    const double fs = 48000;
+    const auto sig = tone(fs, 1.0, 1000.0, 0.5f, 0.5f);
+    auto band = cleanBand(100.0); band.noiseDb = -40.f; band.mute = true;
+    auto r = run(fs, band, oneStation(98.0, 0.f, true), { &sig }, 1.0);
+    CHECK(rms(r.out.l, fs, 0.1, 1.0) == 0.0, "mute silences everything, hiss included");
 }
 
 static void testCleanMono(double fs)
@@ -292,7 +322,8 @@ static void testTwoStationsAndCpu()
 
 int main()
 {
-    testWeight();
+    testZone();
+    testMute();
     testCleanMono(48000);
     testCleanMono(44100);
     testCleanMono(96000);

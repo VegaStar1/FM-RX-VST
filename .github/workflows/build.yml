@@ -25,6 +25,10 @@ jobs:
           g++ -std=c++17 -O1 -g -Wall -Wextra -fsanitize=address,undefined -ISource \
               tests/test_player.cpp Source/Stations/StationPrep.cpp -o player_tests
           ./player_tests
+      - name: Control tests (ASan+UBSan)
+        run: |
+          g++ -std=c++17 -O1 -g -Wall -Wextra -fsanitize=address,undefined -ISource tests/test_control.cpp -o control_tests
+          ./control_tests
       - name: Render demo
         run: |
           g++ -std=c++17 -O2 -ISource tests/render_demo.cpp Source/Engine/FmBand.cpp -o render_demo

@@ -6,7 +6,7 @@ namespace fmrx
 
     namespace
     {
-        constexpr int kBaseW = 1180, kBaseH = 780;
+        constexpr int kBaseW = 1180, kBaseH = 800, kMinW = 980, kMinH = 700;
 
         void paintPanel(juce::Graphics& g, juce::Rectangle<int> r, const juce::String& title, const juce::String& hint)
         {
@@ -25,106 +25,173 @@ namespace fmrx
     }
 
     FmRxEditor::FmRxEditor(FmRxProcessor& p)
-        : AudioProcessorEditor(p), proc_(p), tuner_(p)
+        : AudioProcessorEditor(p), proc_(p), tuner_(p), settings_(p, *appSettings_)
     {
         setLookAndFeel(&lnf_);
         auto& st = p.state();
 
         addAndMakeVisible(tuner_);
-
         for (int i = 0; i < kNumStations; ++i)
             addAndMakeVisible(rows_.add(new StationRow(p, i)));
         p.stations().onChange = [this] { for (auto* r : rows_) r->refresh(); };
 
-        // Полоса настройки.
-        seekDown_.setButtonText(juce::String::fromUTF8("|\xe2\x97\x80"));
-        stepDown_.setButtonText(juce::String::fromUTF8("\xe2\x97\x80"));
-        stepUp_.setButtonText(juce::String::fromUTF8("\xe2\x96\xb6"));
-        seekUp_.setButtonText(juce::String::fromUTF8("\xe2\x96\xb6|"));
-        seekDown_.setTooltip(juce::String::fromUTF8("Предыдущая станция"));
-        seekUp_.setTooltip(juce::String::fromUTF8("Следующая станция"));
-        stepDown_.setTooltip("-0.05 MHz");
-        stepUp_.setTooltip("+0.05 MHz");
-        seekDown_.onClick = [this] { proc_.seek(-1); };
-        seekUp_.onClick = [this] { proc_.seek(+1); };
-        auto step = [this](float d)
-        {
-            const float t = proc_.state().getRawParameterValue(params::tune)->load();
-            proc_.tuneTo(juce::jlimit(87.5f, 108.f, std::round((t + d) * 20.f) / 20.f));
-        };
-        stepDown_.onClick = [step] { step(-0.05f); };
-        stepUp_.onClick = [step] { step(0.05f); };
-        for (auto* b : { &seekDown_, &stepDown_, &stepUp_, &seekUp_ }) addAndMakeVisible(*b);
+        // --- шапка: пресеты, стерео, AFC, настройки ---
+        presetPrev_.setButtonText(juce::String::fromUTF8("\xe2\x97\x80"));
+        presetNext_.setButtonText(juce::String::fromUTF8("\xe2\x96\xb6"));
+        presetPrev_.onClick = [this] { proc_.presets().step(-1); };
+        presetNext_.onClick = [this] { proc_.presets().step(+1); };
+        presetName_.onClick = [this] { showPresetMenu(); };
+        for (auto* b : { &presetPrev_, &presetName_, &presetNext_ }) addAndMakeVisible(*b);
 
-        tuneSlider_.setSliderStyle(juce::Slider::LinearHorizontal);
-        tuneSlider_.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
-        tuneSlider_.setColour(juce::Slider::trackColourId, col::line2);
-        tuneSlider_.setColour(juce::Slider::backgroundColourId, col::line);
-        tuneSlider_.setTooltip(juce::String::fromUTF8("TUNE - автоматизируйте его, чтобы «крутить эфир» огибающей"));
-        addAndMakeVisible(tuneSlider_);
-        tuneAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(st, params::tune, tuneSlider_);
-
-        // Эфир.
-        addKnob(noise_, params::noise, "NOISE", col::cyan, juce::String::fromUTF8("Уровень шума эфира"));
-        addKnob(fading_, params::fading, "FADING", col::cyan, juce::String::fromUTF8("Глубина рэлеевских замираний"));
-        addKnob(fadeRate_, params::fadeRate, "FADE RATE", col::cyan, juce::String::fromUTF8("Скорость замираний"));
-        addKnob(multipath_, params::multipath, "MULTIPATH", col::cyan, juce::String::fromUTF8("Многолучёвость: отражённый сигнал с задержкой"));
-        addKnob(impulse_, params::impulse, "IMPULSE", col::cyan, juce::String::fromUTF8("Импульсные помехи (щелчки)"));
-        addKnob(drift_, params::drift, "DRIFT", col::cyan, juce::String::fromUTF8("Медленный уход частоты гетеродина"));
-
-        // Приёмник.
-        addKnob(ifBw_, params::ifBw, "IF BW", col::amber, juce::String::fromUTF8("Ширина ПЧ-фильтра: уже - меньше соседей, но больше искажений"));
-        addKnob(blend_, params::blend, "BLEND", col::amber, juce::String::fromUTF8("Как рано стерео уходит в моно на слабом сигнале"));
-        addKnob(softMute_, params::softMute, "SOFT MUTE", col::amber, juce::String::fromUTF8("Приглушение шума между станциями и на слабом сигнале"));
-        addKnob(hiCut_, params::hiCut, "HI-CUT", col::amber, juce::String::fromUTF8("Срез верхов на слабом сигнале"));
-        addKnob(speaker_, params::speaker, "SPEAKER", col::amber, juce::String::fromUTF8("Окраска маленьким динамиком"));
-        addKnob(output_, params::output, "OUTPUT", col::amber, juce::String::fromUTF8("Выходной уровень"));
-
-        demod_.addItemList({ "QUAD", "PLL" }, 1);
-        deemph_.addItemList({ juce::String::fromUTF8("50 \xc2\xb5s"), juce::String::fromUTF8("75 \xc2\xb5s"), "Off" }, 1);
         stMode_.addItemList({ "STEREO", "MONO" }, 1);
-        demod_.setTooltip(juce::String::fromUTF8("Демодулятор: квадратурный или ФАПЧ - по-разному звучат на расстройке"));
-        deemph_.setTooltip(juce::String::fromUTF8("Деэмфазис: 50 мкс (Европа) или 75 мкс (США)"));
-        stMode_.setTooltip(juce::String::fromUTF8("Принудительное моно"));
-        for (auto* c : { &demod_, &deemph_, &stMode_ }) addAndMakeVisible(*c);
-        demodAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(st, params::demod, demod_);
-        deemphAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(st, params::deemph, deemph_);
+        addAndMakeVisible(stMode_);
         stModeAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(st, params::stMode, stMode_);
 
         afc_.setButtonText("AFC");
         afc_.setClickingTogglesState(true);
-        afc_.setTooltip(juce::String::fromUTF8("Автоподстройка частоты: «дотягивает» на станцию"));
         addAndMakeVisible(afc_);
         afcAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(st, params::afc, afc_);
 
+        gear_.setButtonText(juce::String::fromUTF8("\xe2\x9a\x99"));
+        gear_.onClick = [this] { openSettings(! settings_.isVisible()); };
+        addAndMakeVisible(gear_);
+
+        // --- полоса управления ---
+        searchDn_.onClick = [this] { proc_.sendCommand(RadioCmd::SearchDown); };
+        searchUp_.onClick = [this] { proc_.sendCommand(RadioCmd::SearchUp); };
+        scan_.onClick     = [this] { proc_.sendCommand(RadioCmd::Scan); };
+        stop_.onClick     = [this] { onStop(); };
+        lock_.onClick     = [this] { proc_.sendCommand(proc_.control().locked() ? RadioCmd::Unlock : RadioCmd::Lock); };
+        auto step = [this](float d)
+        {
+            proc_.tuneTo(juce::jlimit(87.5f, 108.f, std::round((proc_.displayFreq() + d) * 20.f) / 20.f));
+        };
+        stepDown_.setButtonText(juce::String::fromUTF8("\xe2\x97\x80"));
+        stepUp_.setButtonText(juce::String::fromUTF8("\xe2\x96\xb6"));
+        stepDown_.onClick = [step] { step(-0.05f); };
+        stepUp_.onClick = [step] { step(0.05f); };
+        mute_.setClickingTogglesState(true);
+        muteAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(st, params::mute, mute_);
+        for (auto* b : { &searchDn_, &stepDown_, &stepUp_, &searchUp_, &scan_, &stop_, &lock_, &mute_ }) addAndMakeVisible(*b);
+
+        tuneSlider_.setSliderStyle(juce::Slider::LinearHorizontal);
+        tuneSlider_.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+        addAndMakeVisible(tuneSlider_);
+        tuneAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(st, params::tune, tuneSlider_);
+
+        // --- эфир (две строки) и приёмник ---
+        addKnob(noise_, params::noise, "k_noise", "t_noise", true);
+        addKnob(fading_, params::fading, "k_fading", "t_fading", true);
+        addKnob(fadeRate_, params::fadeRate, "k_faderate", "t_faderate", true);
+        addKnob(multipath_, params::multipath, "k_multipath", "t_multipath", true);
+        addKnob(impulse_, params::impulse, "k_impulse", "t_impulse", true);
+        addKnob(drift_, params::drift, "k_drift", "t_drift", true);
+        addKnob(clean_, params::cleanZone, "k_clean", "t_clean", true);
+        addKnob(noiseZone_, params::noiseZone, "k_noisezone", "t_noisezone", true);
+        addKnob(ifBw_, params::ifBw, "k_ifbw", "t_ifbw", false);
+        addKnob(blend_, params::blend, "k_blend", "t_blend", false);
+        addKnob(softMute_, params::softMute, "k_softmute", "t_softmute", false);
+        addKnob(hiCut_, params::hiCut, "k_hicut", "t_hicut", false);
+        addKnob(speaker_, params::speaker, "k_speaker", "t_speaker", false);
+        addKnob(output_, params::output, "k_output", "t_output", false);
+
+        demod_.addItemList({ "QUAD", "PLL" }, 1);
+        deemph_.addItemList({ juce::String::fromUTF8("50 \xc2\xb5s"), juce::String::fromUTF8("75 \xc2\xb5s"), "Off" }, 1);
+        for (auto* c : { &demod_, &deemph_ }) addAndMakeVisible(*c);
+        demodAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(st, params::demod, demod_);
+        deemphAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(st, params::deemph, deemph_);
+
+        addChildComponent(settings_);
+        appSettings_->addChangeListener(this);
+
+        applyTheme();
+        applyTexts();
+
         setResizable(true, true);
-        setResizeLimits(960, 680, 1800, 1200);
-        setSize(kBaseW, kBaseH);
+        setResizeLimits(kMinW, kMinH, 1800, 1250);
+        const int w = juce::jlimit(kMinW, 1800, (int) st.state.getProperty("uiW", kBaseW));
+        const int h = juce::jlimit(kMinH, 1250, (int) st.state.getProperty("uiH", kBaseH));
+        setSize(w, h);
         startTimerHz(10);
     }
 
     FmRxEditor::~FmRxEditor()
     {
+        appSettings_->removeChangeListener(this);
         proc_.stations().onChange = nullptr;
         setLookAndFeel(nullptr);
     }
 
-    void FmRxEditor::addKnob(Knob& k, const char* paramId, const juce::String& label, juce::Colour colour, const juce::String& tip)
+    std::array<FmRxEditor::Knob*, 14> FmRxEditor::allKnobs()
     {
+        return { &noise_, &fading_, &fadeRate_, &multipath_, &impulse_, &drift_, &clean_, &noiseZone_,
+                 &ifBw_, &blend_, &softMute_, &hiCut_, &speaker_, &output_ };
+    }
+
+    void FmRxEditor::addKnob(Knob& k, const char* paramId, const char* labelKey, const char* tipKey, bool air)
+    {
+        k.labelKey = labelKey; k.tipKey = tipKey; k.air = air;
         k.slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        k.slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 76, 16);
-        k.slider.setColour(juce::Slider::rotarySliderFillColourId, colour);
-        k.slider.setColour(juce::Slider::textBoxTextColourId, col::dim);
-        k.slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-        k.slider.setTooltip(tip);
+        k.slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 16);
         addAndMakeVisible(k.slider);
-        k.name.setText(label, juce::dontSendNotification);
         k.name.setJustificationType(juce::Justification::centred);
         k.name.setFont(font(11.f, true));
-        k.name.setColour(juce::Label::textColourId, col::text);
         k.name.setInterceptsMouseClicks(false, false);
         addAndMakeVisible(k.name);
         k.att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(proc_.state(), paramId, k.slider);
+    }
+
+    void FmRxEditor::applyTheme()
+    {
+        lnf_.applyTheme();
+        for (auto* k : allKnobs())
+        {
+            k->slider.setColour(juce::Slider::rotarySliderFillColourId, k->air ? col::cyan : col::amber);
+            k->slider.setColour(juce::Slider::textBoxTextColourId, col::dim);
+            k->slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+            k->name.setColour(juce::Label::textColourId, col::text);
+        }
+        tuneSlider_.setColour(juce::Slider::trackColourId, col::line2);
+        tuneSlider_.setColour(juce::Slider::backgroundColourId, col::line);
+        tuneSlider_.setColour(juce::Slider::thumbColourId, col::amber);
+        for (auto* r : rows_) r->applyTheme();
+        settings_.refresh();
+        sendLookAndFeelChange();
+        repaint();
+    }
+
+    void FmRxEditor::applyTexts()
+    {
+        searchDn_.setButtonText(juce::String::fromUTF8("\xe2\x97\x80 ") + tr("search"));
+        searchUp_.setButtonText(tr("search") + juce::String::fromUTF8(" \xe2\x96\xb6"));
+        scan_.setButtonText(tr("scan"));
+        stop_.setButtonText(tr("stop"));
+        lock_.setButtonText(tr("lock"));
+        mute_.setButtonText(tr("mute"));
+        searchDn_.setTooltip(tr("tip_search_dn"));
+        searchUp_.setTooltip(tr("tip_search_up"));
+        scan_.setTooltip(tr("tip_scan"));
+        stop_.setTooltip(tr("tip_stop"));
+        lock_.setTooltip(tr("tip_lock"));
+        mute_.setTooltip(tr("tip_mute"));
+        stepDown_.setTooltip(tr("tip_step_dn"));
+        stepUp_.setTooltip(tr("tip_step_up"));
+        tuneSlider_.setTooltip(tr("tip_tune"));
+        afc_.setTooltip(tr("tip_afc"));
+        stMode_.setTooltip(tr("tip_stmode"));
+        gear_.setTooltip(tr("tip_gear"));
+        presetName_.setTooltip(tr("preset"));
+        demod_.setTooltip(tr("t_demod"));
+        deemph_.setTooltip(tr("t_deemph"));
+        for (auto* k : allKnobs())
+        {
+            k->name.setText(tr(k->labelKey), juce::dontSendNotification);
+            k->slider.setTooltip(tr(k->tipKey));
+        }
+        for (auto* r : rows_) r->applyTexts();
+        settings_.refresh();
+        timerCallback();
+        repaint();
     }
 
     void FmRxEditor::layoutKnobs(std::initializer_list<Knob*> knobs, juce::Rectangle<int> area)
@@ -143,10 +210,92 @@ namespace fmrx
         }
     }
 
+    // Двойной STOP (в пределах 500 мс) = REWIND: все станции с начала, настройка на 87.5 МГц.
+    void FmRxEditor::onStop()
+    {
+        const auto now = juce::Time::getMillisecondCounter();
+        if (lastStopMs_ != 0 && now - lastStopMs_ <= 500)
+        {
+            proc_.sendCommand(RadioCmd::Rewind);
+            lastStopMs_ = 0;
+        }
+        else
+        {
+            proc_.sendCommand(RadioCmd::Stop);
+            lastStopMs_ = now == 0 ? 1 : now;
+        }
+    }
+
+    void FmRxEditor::showPresetMenu()
+    {
+        auto& pm = proc_.presets();
+        pm.refresh();
+        const auto& e = pm.entries();
+        const int cur = pm.currentIndex();
+        juce::PopupMenu menu;
+        menu.addSectionHeader(tr("preset_factory"));
+        for (int i = 0; i < (int) e.size(); ++i)
+            if (e[(size_t) i].factory) menu.addItem(1 + i, e[(size_t) i].name, true, i == cur);
+        bool header = false;
+        for (int i = 0; i < (int) e.size(); ++i)
+            if (! e[(size_t) i].factory)
+            {
+                if (! header) { menu.addSectionHeader(tr("preset_user")); header = true; }
+                menu.addItem(1 + i, e[(size_t) i].name, true, i == cur);
+            }
+        menu.addSeparator();
+        menu.addItem(1000, tr("preset_save"));
+        menu.addItem(1001, tr("preset_delete"), cur >= 0 && ! e[(size_t) cur].factory);
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&presetName_),
+                           [safe = juce::Component::SafePointer<FmRxEditor>(this), cur](int r)
+                           {
+                               if (safe == nullptr || r == 0) return;
+                               auto& pm2 = safe->proc_.presets();
+                               if (r == 1000) safe->savePresetDialog();
+                               else if (r == 1001) pm2.deleteUser(cur);
+                               else pm2.load(r - 1);
+                               safe->timerCallback();
+                           });
+    }
+
+    void FmRxEditor::savePresetDialog()
+    {
+        saveDialog_ = std::make_unique<juce::AlertWindow>(tr("preset_save"), tr("preset_name"), juce::MessageBoxIconType::NoIcon, this);
+        saveDialog_->addTextEditor("name", proc_.presets().currentName(), {});
+        saveDialog_->addButton(tr("save"), 1, juce::KeyPress(juce::KeyPress::returnKey));
+        saveDialog_->addButton(tr("cancel"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
+        saveDialog_->enterModalState(true, juce::ModalCallbackFunction::create(
+            [safe = juce::Component::SafePointer<FmRxEditor>(this)](int result)
+            {
+                if (safe == nullptr || safe->saveDialog_ == nullptr) return;
+                if (result == 1) safe->proc_.presets().saveUser(safe->saveDialog_->getTextEditorContents("name"));
+                safe->saveDialog_.reset();
+                safe->timerCallback();
+            }), false);
+    }
+
     void FmRxEditor::timerCallback()
     {
+        const auto& ctl = proc_.control();
         const int tuned = proc_.tunedStation();
-        for (int i = 0; i < rows_.size(); ++i) rows_[i]->setTuned(i == tuned);
+        for (int i = 0; i < rows_.size(); ++i)
+        {
+            rows_[i]->setTuned(i == tuned);
+            const auto bit = 1u << i;
+            rows_[i]->setPlayState((ctl.doneMask() & bit) ? 2 : ((ctl.parkedMask() & bit) ? 1 : 0));
+        }
+        lock_.setToggleState(ctl.locked(), juce::dontSendNotification);
+        using S = RadioControl::State;
+        const int s = ctl.state();
+        scan_.setToggleState(s == (int) S::Scanning || s == (int) S::Dwell, juce::dontSendNotification);
+        const bool searching = s == (int) S::Searching || s == (int) S::Settling || ctl.endSearchActive();
+        searchUp_.setToggleState(searching, juce::dontSendNotification);
+        searchDn_.setToggleState(false, juce::dontSendNotification);
+
+        auto name = proc_.presets().currentName();
+        if (name.isEmpty()) name = tr("preset_none");
+        else if (proc_.presets().isModified()) name += " *";
+        presetName_.setButtonText(name);
     }
 
     void FmRxEditor::paint(juce::Graphics& g)
@@ -158,36 +307,52 @@ namespace fmrx
         g.drawText(juce::String::fromUTF8("FM\xc2\xb7RX"), top.removeFromLeft(90), juce::Justification::centredLeft);
         g.setFont(font(12.f));
         g.setColour(col::dim);
-        g.drawText(juce::String::fromUTF8("8-STATION BAND RECEIVER  \xc2\xb7  by NUWMUN"), top, juce::Justification::centredLeft);
+        g.drawText(tr("subtitle") + juce::String::fromUTF8("  \xc2\xb7  by NUWMUN"), top.removeFromLeft(330), juce::Justification::centredLeft);
 
-        paintPanel(g, stationsArea_, "STATIONS", juce::String::fromUTF8("перетащите файлы на строки"));
-        paintPanel(g, airArea_, juce::String::fromUTF8("AIR \xc2\xb7 CHANNEL"), juce::String::fromUTF8("что происходит в эфире"));
-        paintPanel(g, rxArea_, "RECEIVER", {});
+        paintPanel(g, stationsArea_, tr("stations"), tr("stations_hint"));
+        paintPanel(g, airArea_, tr("air"), tr("air_hint"));
+        paintPanel(g, rxArea_, tr("receiver"), {});
     }
 
     void FmRxEditor::resized()
     {
+        proc_.state().state.setProperty("uiW", getWidth(), nullptr);
+        proc_.state().state.setProperty("uiH", getHeight(), nullptr);
+        settings_.setBounds(getLocalBounds());
+
         auto r = getLocalBounds().reduced(20, 16);
         auto header = r.removeFromTop(30);
-        afc_.setBounds(header.removeFromRight(64).reduced(0, 2));
+        gear_.setBounds(header.removeFromRight(36).reduced(0, 1));
+        header.removeFromRight(8);
+        afc_.setBounds(header.removeFromRight(60).reduced(0, 2));
         header.removeFromRight(8);
         stMode_.setBounds(header.removeFromRight(96).reduced(0, 2));
+        header.removeFromRight(16);
+        presetNext_.setBounds(header.removeFromRight(30).reduced(0, 2));
+        presetName_.setBounds(header.removeFromRight(juce::jlimit(150, 240, header.getWidth() - 440)).reduced(2, 2));
+        presetPrev_.setBounds(header.removeFromRight(30).reduced(0, 2));
         r.removeFromTop(12);
 
-        auto tunerArea = r.removeFromTop(juce::jmax(220, r.getHeight() * 32 / 100));
-        auto tuneStrip = tunerArea.removeFromBottom(34);
-        tuner_.setBounds(tunerArea.withTrimmedBottom(6));
-        auto ts = tuneStrip.withTrimmedLeft(juce::jmin(280, tunerArea.getWidth() * 28 / 100) + 12);
-        seekDown_.setBounds(ts.removeFromLeft(42).reduced(2));
-        stepDown_.setBounds(ts.removeFromLeft(42).reduced(2));
-        seekUp_.setBounds(ts.removeFromRight(42).reduced(2));
-        stepUp_.setBounds(ts.removeFromRight(42).reduced(2));
-        tuneSlider_.setBounds(ts.reduced(8, 4));
-        r.removeFromTop(14);
+        auto tunerArea = r.removeFromTop(juce::jmax(210, r.getHeight() * 30 / 100));
+        tuner_.setBounds(tunerArea);
+        r.removeFromTop(8);
+        auto strip = r.removeFromTop(34);
+        mute_.setBounds(strip.removeFromRight(74).reduced(2));
+        strip.removeFromRight(8);
+        lock_.setBounds(strip.removeFromRight(64).reduced(2));
+        stop_.setBounds(strip.removeFromRight(70).reduced(2));
+        scan_.setBounds(strip.removeFromRight(70).reduced(2));
+        strip.removeFromRight(8);
+        searchDn_.setBounds(strip.removeFromLeft(104).reduced(2));
+        stepDown_.setBounds(strip.removeFromLeft(38).reduced(2));
+        searchUp_.setBounds(strip.removeFromRight(104).reduced(2));
+        stepUp_.setBounds(strip.removeFromRight(38).reduced(2));
+        tuneSlider_.setBounds(strip.reduced(8, 4));
+        r.removeFromTop(12);
 
-        stationsArea_ = r.removeFromLeft(r.getWidth() * 56 / 100);
+        stationsArea_ = r.removeFromLeft(r.getWidth() * 57 / 100);
         r.removeFromLeft(14);
-        airArea_ = r.removeFromTop(r.getHeight() * 42 / 100);
+        airArea_ = r.removeFromTop(r.getHeight() * 54 / 100);
         r.removeFromTop(14);
         rxArea_ = r;
 
@@ -196,15 +361,18 @@ namespace fmrx
         for (int i = 0; i < rows_.size(); ++i)
             rows_[i]->setBounds(sa.getX(), sa.getY() + i * rowH, sa.getWidth(), rowH);
 
-        layoutKnobs({ &noise_, &fading_, &fadeRate_, &multipath_, &impulse_, &drift_ }, airArea_.reduced(12, 10).withTrimmedTop(26));
+        auto air = airArea_.reduced(12, 10).withTrimmedTop(24);
+        auto airTop = air.removeFromTop(air.getHeight() / 2);
+        layoutKnobs({ &noise_, &fading_, &fadeRate_, &multipath_ }, airTop);
+        layoutKnobs({ &impulse_, &drift_, &clean_, &noiseZone_ }, air);
 
         auto rx = rxArea_.reduced(12, 10);
         auto rxHead = rx.removeFromTop(20);
-        rxHead.removeFromLeft(90);
+        rxHead.removeFromLeft(100);
         deemph_.setBounds(rxHead.removeFromRight(84));
         rxHead.removeFromRight(8);
         demod_.setBounds(rxHead.removeFromRight(80));
-        rx.removeFromTop(10);
+        rx.removeFromTop(8);
         layoutKnobs({ &ifBw_, &blend_, &softMute_, &hiCut_, &speaker_, &output_ }, rx);
     }
 }

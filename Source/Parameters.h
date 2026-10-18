@@ -24,10 +24,18 @@ namespace fmrx::params
     inline constexpr const char* multipath = "multipath";
     inline constexpr const char* impulse   = "impulse";
     inline constexpr const char* drift     = "drift";
+    inline constexpr const char* cleanZone = "cleanzone";
+    inline constexpr const char* noiseZone = "noisezone";
+    // управление
+    inline constexpr const char* mute      = "mute";
+    inline constexpr const char* clickVol  = "clickvol";
+    inline constexpr const char* seekSpeed = "seekspeed";
+    inline constexpr const char* seekSens  = "seeksens";
 
     enum class Source { File = 0, Input = 1 };
+    enum class Mode { Loop = 0, OneShot = 1 };
 
-    // Станции: s1_on, s1_freq, s1_level, s1_stereo, s1_src ... s8_*
+    // Станции: s1_on, s1_freq, s1_level, s1_stereo, s1_src, s1_mode ... s8_*
     inline juce::String st(int slot, const char* name) { return "s" + juce::String(slot + 1) + "_" + name; }
 
     inline constexpr double kDefaultFreq[kNumStations] = { 88.4, 90.1, 92.7, 95.3, 98.6, 101.2, 104.0, 106.8 };
@@ -79,6 +87,22 @@ namespace fmrx::params
         layout.add(std::make_unique<AudioParameterFloat>(ParameterID { drift, 1 }, "Drift", NormalisableRange<float>(0.f, 1.f), 0.f,
             AudioParameterFloatAttributes().withStringFromValueFunction(pct)));
 
+        auto khz = [](float v, int) { return v >= 1000.f ? String(v / 1000.f, 2) + " MHz" : String(juce::roundToInt(v)) + " kHz"; };
+        layout.add(std::make_unique<AudioParameterFloat>(ParameterID { cleanZone, 1 }, "Clean Zone",
+            NormalisableRange<float>(0.f, 1500.f, 1.f, 0.4f), 60.f,
+            AudioParameterFloatAttributes().withLabel("kHz").withStringFromValueFunction(khz)));
+        layout.add(std::make_unique<AudioParameterFloat>(ParameterID { noiseZone, 1 }, "Noise Zone",
+            NormalisableRange<float>(20.f, 3000.f, 1.f, 0.4f), 350.f,
+            AudioParameterFloatAttributes().withLabel("kHz").withStringFromValueFunction(khz)));
+
+        layout.add(std::make_unique<AudioParameterBool>(ParameterID { mute, 1 }, "Mute", false));
+        layout.add(std::make_unique<AudioParameterFloat>(ParameterID { clickVol, 1 }, "Button Clicks", NormalisableRange<float>(0.f, 1.f), 0.6f,
+            AudioParameterFloatAttributes().withStringFromValueFunction(pct)));
+        layout.add(std::make_unique<AudioParameterFloat>(ParameterID { seekSpeed, 1 }, "Search Speed", NormalisableRange<float>(0.f, 1.f), 0.5f,
+            AudioParameterFloatAttributes().withStringFromValueFunction(pct)));
+        layout.add(std::make_unique<AudioParameterFloat>(ParameterID { seekSens, 1 }, "Search Sensitivity", NormalisableRange<float>(0.f, 1.f), 0.5f,
+            AudioParameterFloatAttributes().withStringFromValueFunction(pct)));
+
         for (int i = 0; i < kNumStations; ++i)
         {
             const String n = "Station " + String(i + 1) + " ";
@@ -94,6 +118,8 @@ namespace fmrx::params
             layout.add(std::make_unique<AudioParameterBool>(ParameterID { st(i, "stereo"), 1 }, n + "Stereo", true));
             layout.add(std::make_unique<AudioParameterChoice>(ParameterID { st(i, "src"), 1 }, n + "Source",
                 StringArray { "File", "Input" }, 0));
+            layout.add(std::make_unique<AudioParameterChoice>(ParameterID { st(i, "mode"), 1 }, n + "Playback",
+                StringArray { "Loop", "One-shot" }, 0));
         }
         return layout;
     }

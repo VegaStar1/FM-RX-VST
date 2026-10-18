@@ -19,16 +19,6 @@ namespace fmrx
         }
     }
 
-    float FmBand::stationWeight(double offsetHz, double maxOffsetHz) noexcept
-    {
-        const double a = std::fabs(offsetHz);
-        const double fadeStart = maxOffsetHz - 30000.0;
-        if (a <= fadeStart) return 1.f;
-        if (a >= maxOffsetHz) return 0.f;
-        const double t = (a - fadeStart) / (maxOffsetHz - fadeStart);
-        return (float) (0.5 + 0.5 * std::cos(kPi * t));
-    }
-
     void FmBand::prepare(double hostFs, int /*maxBlock*/)
     {
         hostFs_ = hostFs;
@@ -48,6 +38,7 @@ namespace fmrx
         tuneK_ = 1.0 - std::exp(-1.0 / (0.04 * hostFs));
         afcK_  = 1.0 - std::exp(-1.0 / (0.6 * hostFs));
         afcHoldSamples_ = (int) (0.25 * hostFs);
+        muteK_ = (float) (1.0 - std::exp(-1.0 / (0.008 * hostFs)));
         latency_ = (int) std::lround(tx_[0].latencyHostSamples() + rx_.latencyHostSamples());
         emphasis_ = -1.0;
         speakerAmt_ = -1.f;
@@ -107,6 +98,11 @@ namespace fmrx
             fader_[(size_t) i].setRate(band.fadeRateHz);
         }
         const float fading = std::clamp(band.fading, 0.f, 1.f);
+        const double cleanHz = std::clamp((double) band.cleanZoneHz, 0.0, 3.0e6);
+        const double noiseHz = std::clamp((double) band.noiseZoneHz, 1000.0, 5.0e6);
+        // Если зона шире полосы эфира - масштабируем отстройку, чтобы станция не «заворачивалась».
+        const double rfScale = std::max(1.0, (cleanHz + noiseHz) / (maxOffset_ * 0.95));
+        const float muteTarget = band.mute ? 0.f : 1.f;
         if (first_) { tuneSmooth_ = band.tuneMHz; lastTarget_ = band.tuneMHz; first_ = false; }
 
         std::array<float, kNumStations> strengthAcc {};
@@ -133,12 +129,12 @@ namespace fmrx
                 if (amp <= 0.f) continue;
 
                 const double offset = st[si].freqMHz * 1.0e6 - lo;
-                const float w = stationWeight(offset, maxOffset_);
-                if (w <= 0.f) continue;
+                const float zdb = zoneGainDb(offset, cleanHz, noiseHz);
+                if (zdb <= kZoneOffDb + 0.01f) continue;
 
                 active[si] = true;
-                gain[si] = g * (amp * w);
-                tx_[si].setOffsetHz(offset);
+                gain[si] = g * (amp * dbToGain(zdb));
+                tx_[si].setOffsetHz(offset / rfScale);
                 tx_[si].pushHost(inL, inR);
             }
 
@@ -167,7 +163,7 @@ namespace fmrx
             if (! knobStill)
                 afcHz_ *= (1.0 - 20.0 * afcK_);
             else if (band.afc && m.snrDb > 14.f)
-                afcHz_ = std::clamp(afcHz_ + afcK_ * (double) m.freqOffsetHz, -50000.0, 50000.0);
+                afcHz_ = std::clamp(afcHz_ + afcK_ * (double) m.freqOffsetHz * rfScale, -50000.0 * rfScale, 50000.0 * rfScale);
             else
                 afcHz_ *= (1.0 - afcK_);
 
@@ -180,8 +176,10 @@ namespace fmrx
                 r = std::tanh(r * drive) / drive;
             }
             outGain_ += 0.002f * (outTarget - outGain_);
-            outL[n] = softClip(l * outGain_);
-            outR[n] = softClip(r * outGain_);
+            muteGain_ += muteK_ * (muteTarget - muteGain_);
+            if (muteGain_ < 1e-4f && band.mute) muteGain_ = 0.f;
+            outL[n] = softClip(l * outGain_) * muteGain_;
+            outR[n] = softClip(r * outGain_) * muteGain_;
         }
 
         // --- индикаторы ---

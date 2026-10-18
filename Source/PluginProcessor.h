@@ -1,6 +1,9 @@
 #pragma once
+#include "Dsp/ClickGen.h"
 #include "Engine/FmBand.h"
+#include "Engine/RadioControl.h"
 #include "Parameters.h"
+#include "Presets/PresetManager.h"
 #include "Stations/LoopPlayer.h"
 #include "Stations/StationManager.h"
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -40,29 +43,42 @@ namespace fmrx
         // --- для UI (message thread) ---
         juce::AudioProcessorValueTreeState& state() { return apvts_; }
         StationManager& stations() { return stations_; }
+        PresetManager& presets() { return presets_; }
         BandMeters meters() const { return band_.meters(); }
+        const RadioControl& control() const { return control_; }
+        void  sendCommand(RadioCmd c) { control_.post(c); }
+        float displayFreq() const;                 // что слышно сейчас (во время поиска - частота движка)
+        float param(const char* id) const { return apvts_.getRawParameterValue(id)->load(); }
         float stationFreq(int slot) const;
         bool  stationAudible(int slot) const;      // включена и есть звук (файл или вход)
         int   tunedStation() const;                // станция под стрелкой (-1 - нет)
-        void  seek(int direction);                 // к соседней станции
         void  tuneTo(float mhz);
+        void  setParam(const char* id, float plain);
 
     private:
-        void timerCallback() override { stations_.reclaim(); }
-        void readParams(BandParams& band, std::array<StationParams, kNumStations>& st, std::array<int, kNumStations>& src) const;
+        void timerCallback() override;
+        void readParams(BandParams& band, std::array<StationParams, kNumStations>& st,
+                        std::array<int, kNumStations>& src, std::array<int, kNumStations>& mode) const;
 
         juce::AudioProcessorValueTreeState apvts_;
         StationManager stations_;
+        PresetManager presets_ { apvts_ };
         FmBand band_;
+        RadioControl control_;
+        dsp::ClickGen click_;
         std::array<LoopPlayer, kNumStations> players_;
+        bool lastMute_ = false, muteKnown_ = false;
+        int timerTicks_ = 0;
 
         // Кэш указателей на параметры (чтение в аудиопотоке без поиска по строкам).
-        struct StationParamPtrs { std::atomic<float>* on; std::atomic<float>* freq; std::atomic<float>* level; std::atomic<float>* stereo; std::atomic<float>* src; };
+        struct StationParamPtrs { std::atomic<float>* on; std::atomic<float>* freq; std::atomic<float>* level;
+                                  std::atomic<float>* stereo; std::atomic<float>* src; std::atomic<float>* mode; };
         std::array<StationParamPtrs, kNumStations> sp_ {};
         std::atomic<float>* pTune_ = nullptr, * pAfc_ = nullptr, * pIfBw_ = nullptr, * pDemod_ = nullptr, * pDeemph_ = nullptr,
                           * pStMode_ = nullptr, * pBlend_ = nullptr, * pSoftMute_ = nullptr, * pHiCut_ = nullptr, * pSpeaker_ = nullptr,
                           * pOutput_ = nullptr, * pNoise_ = nullptr, * pFading_ = nullptr, * pFadeRate_ = nullptr, * pMultipath_ = nullptr,
-                          * pImpulse_ = nullptr, * pDrift_ = nullptr;
+                          * pImpulse_ = nullptr, * pDrift_ = nullptr, * pClean_ = nullptr, * pNoiseZone_ = nullptr, * pMute_ = nullptr,
+                          * pClickVol_ = nullptr, * pSeekSpeed_ = nullptr, * pSeekSens_ = nullptr;
 
         // Рабочие буферы (выделяются в prepareToPlay).
         int scratchSize_ = 0;
