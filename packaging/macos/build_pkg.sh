@@ -32,8 +32,22 @@ codesign --verify --strict --verbose=2 "$WORK/vst3/FM RX.vst3"
 
 echo "== component packages"
 # Бандл не «переезжает» туда, где система нашла старую копию: всегда в /Library/Audio/Plug-Ins/VST3.
-pkgbuild --analyze --root "$WORK/vst3" "$WORK/vst3.plist"
-/usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" "$WORK/vst3.plist"
+# pkgbuild --analyze не распознаёт .vst3 как бандл, поэтому описание компонента задаём явно.
+cat > "$WORK/vst3.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+    <dict>
+        <key>BundleHasStrictIdentifier</key><true/>
+        <key>BundleIsRelocatable</key><false/>
+        <key>BundleIsVersionChecked</key><false/>
+        <key>BundleOverwriteAction</key><string>upgrade</string>
+        <key>RootRelativeBundlePath</key><string>FM RX.vst3</string>
+    </dict>
+</array>
+</plist>
+PLIST
 pkgbuild --root "$WORK/vst3" --component-plist "$WORK/vst3.plist" \
   --identifier com.nuwmun.fmrx.vst3 --version "$VERSION" \
   --install-location "/Library/Audio/Plug-Ins/VST3" "$WORK/pkgs/fmrx-vst3.pkg"
