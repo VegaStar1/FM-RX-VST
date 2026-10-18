@@ -5,3 +5,5 @@ out/
 *.o
 *.obj
 CMakeUserPresets.json
+dist/
+pv-logs/

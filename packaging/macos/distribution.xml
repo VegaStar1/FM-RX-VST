@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>FM RX @VERSION@</title>
+    <organization>com.nuwmun</organization>
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+    <options customize="never" require-scripts="false" hostArchitectures="x86_64,arm64"/>
+    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+    <volume-check>
+        <allowed-os-versions><os-version min="10.13"/></allowed-os-versions>
+    </volume-check>
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.nuwmun.fmrx.vst3"/>
+            <line choice="com.nuwmun.fmrx.docs"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="com.nuwmun.fmrx.vst3" visible="false">
+        <pkg-ref id="com.nuwmun.fmrx.vst3"/>
+    </choice>
+    <choice id="com.nuwmun.fmrx.docs" visible="false">
+        <pkg-ref id="com.nuwmun.fmrx.docs"/>
+    </choice>
+    <pkg-ref id="com.nuwmun.fmrx.vst3" version="@VERSION@" onConclusion="none">fmrx-vst3.pkg</pkg-ref>
+    <pkg-ref id="com.nuwmun.fmrx.docs" version="@VERSION@" onConclusion="none">fmrx-docs.pkg</pkg-ref>
+</installer-gui-script>

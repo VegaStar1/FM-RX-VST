@@ -1,5 +1,12 @@
 cmake_minimum_required(VERSION 3.22)
-project(FmRx VERSION 0.3.0 LANGUAGES C CXX)
+
+# Релизные настройки платформ (до project()).
+# macOS: универсальный бинарник задаётся в CI (-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"), минимум macOS 10.13.
+set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Минимальная версия macOS")
+# Windows: статическая среда MSVC - пользователю не нужен Visual C++ Redistributable.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+project(FmRx VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -47,6 +54,8 @@ juce_add_plugin(FmRx
     PRODUCT_NAME "FM RX"
     PLUGIN_MANUFACTURER_CODE Nuwm
     PLUGIN_CODE Fmrx
+    BUNDLE_ID com.nuwmun.fmrx
+    HARDENED_RUNTIME_ENABLED TRUE
     FORMATS VST3
     VST3_CATEGORIES Fx
     IS_SYNTH FALSE

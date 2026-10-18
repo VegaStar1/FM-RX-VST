@@ -1,9 +1,23 @@
 name: build
 
+# На каждый push: тесты ядра, плагин и установщики для Windows и macOS, проверка pluginval, тестовая установка.
+# На тег vX.Y.Z (совпадает с версией в CMakeLists.txt): черновик релиза GitHub с установщиками и PDF-инструкциями.
+#
+# Подпись (необязательно, по секретам репозитория; без них установщики собираются неподписанными):
+#   Windows: WIN_CERT_PFX_BASE64, WIN_CERT_PASSWORD
+#   macOS:   MAC_CERTS_P12_BASE64, MAC_CERTS_PASSWORD (Developer ID Application + Developer ID Installer в одном .p12),
+#            MAC_APP_SIGN_ID, MAC_INSTALLER_SIGN_ID, NOTARY_APPLE_ID, NOTARY_PASSWORD, NOTARY_TEAM_ID
+# Подробно - docs/RELEASE.md.
+
 on:
   push:
+    branches: [ main ]
+    tags: [ 'v*' ]
   pull_request:
   workflow_dispatch:
+
+env:
+  PLUGINVAL_ARGS: --strictness-level 5 --timeout-ms 300000 --verbose
 
 jobs:
   # Чистое C++-ядро: быстрые тесты с санитайзерами (без JUCE).
@@ -29,31 +43,168 @@ jobs:
         run: |
           g++ -std=c++17 -O1 -g -Wall -Wextra -fsanitize=address,undefined -ISource tests/test_control.cpp -o control_tests
           ./control_tests
-      - name: Render demo
-        run: |
-          g++ -std=c++17 -O2 -ISource tests/render_demo.cpp Source/Engine/FmBand.cpp -o render_demo
-          ./render_demo fm_demo.wav
-      - uses: actions/upload-artifact@v4
-        with:
-          name: FM-RX-demo-wav
-          path: fm_demo.wav
+      - name: Manual PDFs are present
+        run: test -f "docs/manual/FM RX Manual EN.pdf" && test -f "docs/manual/FM RX Manual RU.pdf"
 
-  # Windows x64 VST3 (JUCE подтягивается через FetchContent).
-  windows-vst3:
+  windows:
     runs-on: windows-2022
+    env:
+      WIN_CERT_PFX_BASE64: ${{ secrets.WIN_CERT_PFX_BASE64 }}
+      WIN_CERT_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
+      - name: Version
+        shell: bash
+        run: |
+          V=$(sed -n 's/^project(FmRx VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          echo "FMRX_VERSION=$V" >> "$GITHUB_ENV"
+          echo "version $V"
       - name: Configure
         run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
       - name: Build (Release)
         run: cmake --build build --config Release --parallel
-      - name: Test
+      - name: Core tests
         run: ctest --test-dir build -C Release --output-on-failure
-      - name: List VST3 output
+      - name: pluginval
         shell: pwsh
-        run: Get-ChildItem -Recurse build -Filter *.vst3 | Select-Object FullName
+        run: |
+          Invoke-WebRequest https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip -OutFile pluginval.zip
+          Expand-Archive pluginval.zip -DestinationPath pluginval
+          # pluginval - GUI-приложение: ждём завершения через Start-Process -Wait.
+          $a = "$env:PLUGINVAL_ARGS --output-dir `"$PWD\pv-logs`" --validate `"$PWD\build\FmRx_artefacts\Release\VST3\FM RX.vst3`""
+          $p = Start-Process -FilePath pluginval\pluginval.exe -ArgumentList $a -Wait -PassThru -NoNewWindow
+          Get-ChildItem pv-logs -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName | Select-Object -Last 60 }
+          if ($p.ExitCode -ne 0) { throw "pluginval failed: $($p.ExitCode)" }
+      - name: Sign plug-in (optional)
+        if: env.WIN_CERT_PFX_BASE64 != ''
+        shell: pwsh
+        run: |
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\cert.pfx", [Convert]::FromBase64String($env:WIN_CERT_PFX_BASE64))
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe | Where-Object FullName -like '*x64*' | Select-Object -Last 1
+          & $signtool.FullName sign /f "$env:RUNNER_TEMP\cert.pfx" /p "$env:WIN_CERT_PASSWORD" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "build\FmRx_artefacts\Release\VST3\FM RX.vst3\Contents\x86_64-win\FM RX.vst3"
+      - name: Installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          & $iscc /Qp "/DAppVersion=$env:FMRX_VERSION" "/DPluginDir=$PWD\build\FmRx_artefacts\Release\VST3\FM RX.vst3" `
+                  "/DDocsDir=$PWD\docs\manual" "/DOutDir=$PWD\dist" packaging\windows\FmRx.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+      - name: Sign installer (optional)
+        if: env.WIN_CERT_PFX_BASE64 != ''
+        shell: pwsh
+        run: |
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe | Where-Object FullName -like '*x64*' | Select-Object -Last 1
+          & $signtool.FullName sign /f "$env:RUNNER_TEMP\cert.pfx" /p "$env:WIN_CERT_PASSWORD" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "dist\FM-RX-$env:FMRX_VERSION-Windows-Setup.exe"
+      - name: Test install / uninstall
+        shell: pwsh
+        run: |
+          $setup = "dist\FM-RX-$env:FMRX_VERSION-Windows-Setup.exe"
+          $p = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LOG=install.log' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content install.log; throw "install failed: $($p.ExitCode)" }
+          $dll = "C:\Program Files\Common Files\VST3\FM RX.vst3\Contents\x86_64-win\FM RX.vst3"
+          if (-not (Test-Path $dll)) { throw "plug-in not installed: $dll" }
+          if (-not (Test-Path "C:\Program Files\NUWMUN\FM RX\FM RX Manual RU.pdf")) { throw "manual not installed" }
+          Write-Host "installed OK"
+          $p = Start-Process -FilePath pluginval\pluginval.exe -ArgumentList '--strictness-level 2 --validate "C:\Program Files\Common Files\VST3\FM RX.vst3"' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "installed plug-in fails pluginval: $($p.ExitCode)" }
+          $p = Start-Process -FilePath "C:\Program Files\NUWMUN\FM RX\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+          Start-Sleep -Seconds 3
+          if (Test-Path "C:\Program Files\Common Files\VST3\FM RX.vst3") { throw "uninstall left the plug-in" }
+          Write-Host "uninstalled OK"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FM-RX-windows-installer
+          path: dist/*.exe
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: FM-RX-vst3-win-x64
           path: "build/FmRx_artefacts/Release/VST3/FM RX.vst3"
           if-no-files-found: error
+
+  macos:
+    runs-on: macos-14
+    env:
+      MAC_CERTS_P12_BASE64: ${{ secrets.MAC_CERTS_P12_BASE64 }}
+      MAC_CERTS_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
+      MAC_APP_SIGN_ID: ${{ secrets.MAC_APP_SIGN_ID }}
+      MAC_INSTALLER_SIGN_ID: ${{ secrets.MAC_INSTALLER_SIGN_ID }}
+      NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+      NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+      NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        run: |
+          V=$(sed -n 's/^project(FmRx VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          echo "FMRX_VERSION=$V" >> "$GITHUB_ENV"
+      - name: Configure (universal arm64 + x86_64)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+      - name: Core tests
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Universal binary
+        run: lipo -info "build/FmRx_artefacts/Release/VST3/FM RX.vst3/Contents/MacOS/FM RX" | tee /dev/stderr | grep -q "x86_64 arm64\|arm64 x86_64"
+      - name: pluginval
+        run: |
+          curl -sSL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
+          unzip -q pluginval.zip
+          ./pluginval.app/Contents/MacOS/pluginval $PLUGINVAL_ARGS --output-dir pv-logs --validate "build/FmRx_artefacts/Release/VST3/FM RX.vst3" \
+            || { tail -n 80 pv-logs/* 2>/dev/null; exit 1; }
+      - name: Import signing certificates (optional)
+        if: env.MAC_CERTS_P12_BASE64 != ''
+        run: |
+          KC="$RUNNER_TEMP/sign.keychain-db"
+          echo "$MAC_CERTS_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/certs.p12"
+          security create-keychain -p ci "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p ci "$KC"
+          security import "$RUNNER_TEMP/certs.p12" -k "$KC" -P "$MAC_CERTS_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productbuild
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci "$KC"
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+      - name: Installer (.pkg)
+        run: packaging/macos/build_pkg.sh "$FMRX_VERSION" "build/FmRx_artefacts/Release/VST3/FM RX.vst3" docs/manual dist
+      - name: Test install
+        run: |
+          sudo installer -pkg "dist/FM-RX-$FMRX_VERSION-macOS.pkg" -target /
+          test -f "/Library/Audio/Plug-Ins/VST3/FM RX.vst3/Contents/MacOS/FM RX"
+          test -f "/Library/Application Support/NUWMUN/FM RX/FM RX Manual EN.pdf"
+          codesign --verify --strict "/Library/Audio/Plug-Ins/VST3/FM RX.vst3"
+          ./pluginval.app/Contents/MacOS/pluginval --strictness-level 2 --validate "/Library/Audio/Plug-Ins/VST3/FM RX.vst3"
+          echo "installed OK"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FM-RX-macos-installer
+          path: dist/*.pkg
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ core-tests-linux, windows, macos ]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: FM-RX-*-installer
+          path: dist
+          merge-multiple: true
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(sed -n 's/^project(FmRx VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          TAG="${GITHUB_REF_NAME}"
+          [ "$TAG" = "v$V" ] || { echo "tag $TAG does not match CMake version $V"; exit 1; }
+          cp "docs/manual/FM RX Manual EN.pdf" dist/FM-RX-$V-Manual-EN.pdf
+          cp "docs/manual/FM RX Manual RU.pdf" dist/FM-RX-$V-Manual-RU.pdf
+          ls -la dist
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --draft --title "FM RX $V" --notes-file packaging/RELEASE_NOTES.md
+          fi

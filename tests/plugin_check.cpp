@@ -151,6 +151,36 @@ int main(int argc, char** argv)
           "trim markers restored with the project");
     CHECK(proc3->stations().autoTrim(4, -50.f), "auto-trim runs on a loaded station");
 
+    // Перепривязка пропавшего файла: обрезка и имя станции сохраняются.
+    {
+        auto tmpA = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("fmrx_relink_a.wav");
+        auto tmpB = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("fmrx_relink_b.wav");
+        wav.copyFileTo(tmpA);
+        proc2->stations().loadFileAsync(6, tmpA);
+        pump(1500);
+        proc2->stations().setName(6, "MY TRIM");
+        proc2->stations().setTrim(6, 3.0, 9.0);
+        juce::MemoryBlock st6;
+        proc2->getStateInformation(st6);
+        tmpA.deleteFile();
+        auto proc3 = std::make_unique<FmRxProcessor>();
+        proc3->setPlayConfigDetails(2, 2, 48000.0, 512);
+        proc3->prepareToPlay(48000.0, 512);
+        proc3->setStateInformation(st6.getData(), (int) st6.getSize());
+        pump(800);
+        CHECK(proc3->stations().meta(6).missing, "moved file is reported missing");
+        wav.copyFileTo(tmpB);
+        proc3->stations().loadFileAsync(6, tmpB);
+        pump(1500);
+        const auto& m6 = proc3->stations().meta(6);
+        std::printf("relinked: name %s, trim %.2f .. %.2f\n", m6.name.toRawUTF8(), m6.trimStart, m6.trimEnd);
+        CHECK(m6.name == "MY TRIM" && std::fabs(m6.trimStart - 3.0) < 0.01 && std::fabs(m6.trimEnd - 9.0) < 0.01,
+              "relinking a moved file keeps its trim and name");
+        proc2->stations().clearSlot(6);
+        proc3->releaseResources();
+        tmpB.deleteFile();
+    }
+
     // Снимки интерфейса.
     setParam(*proc2, params::st(0, "mode"), 0.f);
     setParam(*proc2, params::fading, 0.2f);
@@ -159,10 +189,33 @@ int main(int argc, char** argv)
         juce::SharedResourcePointer<ui::AppSettings> app;
         app->setLanguage(ui::Lang::Ru);
         app->setSkin(0);
+        app->setShowHelpOnStart(true);
         auto* raw = proc2->createEditor();
         std::unique_ptr<FmRxEditor> ed(dynamic_cast<FmRxEditor*>(raw));
         ed->setSize(1180, 800);
         for (int i = 0; i < 20; ++i) { runBlocks(*proc2, 4, finite); pump(30); }
+
+        // Помощь при первом запуске.
+        CHECK(ed->helpVisible(), "help opens at first launch");
+        snapshot(*ed, outDir.getChildFile("ui_help_ru.png"));
+        app->setLanguage(ui::Lang::En);
+        ed->openHelp(2);
+        pump(60);
+        snapshot(*ed, outDir.getChildFile("ui_help_en.png"));
+        app->setLanguage(ui::Lang::Ru);
+        ed->closeHelp();
+        pump(30);
+        CHECK(! ed->helpVisible(), "help closes");
+        {
+            auto* raw2 = proc2->createEditor();                  // второе окно в том же запуске DAW
+            std::unique_ptr<FmRxEditor> ed2(dynamic_cast<FmRxEditor*>(raw2));
+            pump(60);
+            CHECK(! ed2->helpVisible(), "help auto-shows only once per session");
+        }
+        app->setShowHelpOnStart(false);
+        CHECK(! app->showHelpOnStart(), "don't-show-again is stored");
+        app->setShowHelpOnStart(true);
+
         snapshot(*ed, outDir.getChildFile("ui_ru_graphite.png"));
         app->setLanguage(ui::Lang::En);
         for (int s = 1; s < ui::kNumSkins; ++s)
@@ -188,6 +241,30 @@ int main(int argc, char** argv)
         snapshot(*ed, outDir.getChildFile("ui_settings_ru.png"));
         CHECK(outDir.getChildFile("ui_settings_ru.png").getSize() > 1000, "UI snapshots written");
         ed->openSettings(false);
+
+        // Снимки для PDF-инструкции (docs/manual/img): главное окно, редактор, настройки, помощь - RU и EN.
+        for (auto lang : { ui::Lang::Ru, ui::Lang::En })
+        {
+            const juce::String l = lang == ui::Lang::Ru ? "ru" : "en";
+            app->setLanguage(lang);
+            pump(60);
+            for (int i = 0; i < 6; ++i) { runBlocks(*proc2, 4, finite); pump(30); }
+            snapshot(*ed, outDir.getChildFile("manual_" + l + "_main.png"));
+            ed->openStationEditor(0);
+            pump(60);
+            snapshot(*ed, outDir.getChildFile("manual_" + l + "_editor.png"));
+            ed->closeStationEditor();
+            ed->openSettings(true);
+            pump(60);
+            snapshot(*ed, outDir.getChildFile("manual_" + l + "_settings.png"));
+            ed->openSettings(false);
+            ed->openHelp(0);
+            pump(60);
+            snapshot(*ed, outDir.getChildFile("manual_" + l + "_help.png"));
+            ed->closeHelp();
+            pump(30);
+        }
+        app->setLanguage(ui::Lang::Ru);
         ed->setSize(980, 700);
         const auto small = ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f);
         CHECK(small.isValid(), "UI lays out at minimum size");

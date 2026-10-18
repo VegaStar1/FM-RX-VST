@@ -1,6 +1,7 @@
 #pragma once
 #include "PluginProcessor.h"
 #include "UI/AppSettings.h"
+#include "UI/HelpPanel.h"
 #include "UI/SettingsPanel.h"
 #include "UI/StationEditor.h"
 #include "UI/StationRow.h"
@@ -21,6 +22,9 @@ namespace fmrx
 
         // Для консольной проверки (снимки UI).
         void openSettings(bool open) { settings_.setVisible(open); if (open) settings_.toFront(false); }
+        void openHelp(int section = 0) { settings_.setVisible(false); help_.open(section); }
+        bool helpVisible() const { return help_.isVisible(); }
+        void closeHelp() { help_.dismiss(); }
         void openStationEditor(int slot);
         void closeStationEditor();
 
@@ -73,6 +77,7 @@ namespace fmrx
         juce::ComboBox demod_, deemph_;
         juce::TooltipWindow tooltips_ { this, 600 };
         ui::SettingsPanel settings_;
+        ui::HelpPanel help_;
         std::unique_ptr<juce::AlertWindow> saveDialog_;
 
         juce::Rectangle<int> stationsArea_, airArea_, rxArea_;

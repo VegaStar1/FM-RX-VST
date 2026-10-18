@@ -1,5 +1,5 @@
 #pragma once
-// Глобальные настройки интерфейса (язык, скин): один экземпляр на процесс (SharedResourcePointer),
+// Глобальные настройки интерфейса (язык, скин, помощь при запуске): один экземпляр на процесс (SharedResourcePointer),
 // файл <AppData>/NUWMUN/FM RX/FM RX.settings. Все открытые окна плагина подписаны и обновляются вместе.
 #include "Strings.h"
 #include "Theme.h"
@@ -27,6 +27,39 @@ namespace fmrx::ui
         }
 
         Lang language() const { return currentLang(); }
+
+        // Окно помощи при запуске: показывается, пока пользователь не отметит «Больше не показывать».
+        bool showHelpOnStart() const { return props_->getBoolValue("showHelpOnStart", true); }
+        void setShowHelpOnStart(bool on)
+        {
+            props_->setValue("showHelpOnStart", on);
+            props_->saveIfNeeded();
+        }
+
+        // Не больше одного автопоказа за запуск DAW (окно плагина могут открывать и закрывать много раз).
+        static bool& helpShownThisSession() { static bool shown = false; return shown; }
+
+        // PDF-инструкция, которую кладёт установщик: Windows - Program Files\NUWMUN\FM RX,
+        // macOS - /Library/Application Support/NUWMUN/FM RX. Сначала на текущем языке, затем на другом.
+        static juce::File findManual(Lang lang)
+        {
+            juce::Array<juce::File> dirs;
+           #if JUCE_WINDOWS
+            dirs.add(juce::File::getSpecialLocation(juce::File::globalApplicationsDirectory).getChildFile("NUWMUN").getChildFile("FM RX"));
+            dirs.add(juce::File::getSpecialLocation(juce::File::commonApplicationDataDirectory).getChildFile("NUWMUN").getChildFile("FM RX"));
+           #elif JUCE_MAC
+            dirs.add(juce::File("/Library/Application Support/NUWMUN/FM RX"));
+            dirs.add(juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("Application Support/NUWMUN/FM RX"));
+           #else
+            dirs.add(juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("NUWMUN/FM RX"));
+           #endif
+            const char* first  = lang == Lang::Ru ? "FM RX Manual RU.pdf" : "FM RX Manual EN.pdf";
+            const char* second = lang == Lang::Ru ? "FM RX Manual EN.pdf" : "FM RX Manual RU.pdf";
+            for (auto* name : { first, second })
+                for (auto& d : dirs)
+                    if (d.getChildFile(name).existsAsFile()) return d.getChildFile(name);
+            return {};
+        }
         int skin() const { return currentSkin(); }
 
         void setLanguage(Lang l)

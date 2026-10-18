@@ -25,7 +25,7 @@ namespace fmrx
     }
 
     FmRxEditor::FmRxEditor(FmRxProcessor& p)
-        : AudioProcessorEditor(p), proc_(p), tuner_(p), stationEditor_(p), settings_(p, *appSettings_)
+        : AudioProcessorEditor(p), proc_(p), tuner_(p), stationEditor_(p), settings_(p, *appSettings_), help_(*appSettings_)
     {
         setLookAndFeel(&lnf_);
         auto& st = p.state();
@@ -129,6 +129,8 @@ namespace fmrx
         deemphAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(st, params::deemph, deemph_);
 
         addChildComponent(settings_);
+        addChildComponent(help_);
+        settings_.onHelp = [this] { openHelp(); };
         appSettings_->addChangeListener(this);
 
         applyTheme();
@@ -140,6 +142,14 @@ namespace fmrx
         const int h = juce::jlimit(kMinH, 1250, (int) st.state.getProperty("uiH", kBaseH));
         setSize(w, h);
         startTimerHz(10);
+
+        // Первый запуск: помощь, пока не отмечено «Больше не показывать» (не чаще раза за запуск DAW).
+        if (appSettings_->showHelpOnStart() && ! ui::AppSettings::helpShownThisSession())
+        {
+            ui::AppSettings::helpShownThisSession() = true;
+            juce::Component::SafePointer<FmRxEditor> safe(this);
+            juce::MessageManager::callAsync([safe] { if (safe != nullptr) safe->openHelp(); });
+        }
     }
 
     FmRxEditor::~FmRxEditor()
@@ -207,6 +217,7 @@ namespace fmrx
         for (auto* r : rows_) r->applyTheme();
         stationEditor_.applyTheme();
         settings_.refresh();
+        help_.refresh();
         sendLookAndFeelChange();
         repaint();
     }
@@ -247,6 +258,7 @@ namespace fmrx
         for (auto* r : rows_) r->applyTexts();
         stationEditor_.applyTexts();
         settings_.refresh();
+        help_.refresh();
         timerCallback();
         repaint();
     }
@@ -384,6 +396,7 @@ namespace fmrx
         proc_.state().state.setProperty("uiW", getWidth(), nullptr);
         proc_.state().state.setProperty("uiH", getHeight(), nullptr);
         settings_.setBounds(getLocalBounds());
+        help_.setBounds(getLocalBounds());
 
         auto r = getLocalBounds().reduced(20, 16);
         auto header = r.removeFromTop(30);

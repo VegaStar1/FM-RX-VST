@@ -31,8 +31,13 @@ namespace fmrx::ui
                 addAndMakeVisible(b);
             }
 
+            help_.onClick = [this] { setVisible(false); if (onHelp) onHelp(); };
+            addAndMakeVisible(help_);
+
             refresh();
         }
+
+        std::function<void()> onHelp;
 
         void refresh()
         {
@@ -40,6 +45,7 @@ namespace fmrx::ui
             ru_.setToggleState(settings_.language() == Lang::Ru, juce::dontSendNotification);
             for (int i = 0; i < skins_.size(); ++i) skins_[i]->setToggleState(i == settings_.skin(), juce::dontSendNotification);
             close_.setTooltip(tr("close"));
+            help_.setButtonText(tr("set_help_btn"));
             repaint();
         }
 
@@ -65,6 +71,8 @@ namespace fmrx::ui
             g.setFont(font(11.f));
             g.setColour(col::faint);
             g.drawText(tr("set_note"), noteArea_, juce::Justification::centredLeft);
+            g.drawText("FM" + juce::String::fromUTF8("\xc2\xb7") + "RX v" + juce::String(JucePlugin_VersionString), versionArea_,
+                       juce::Justification::centredLeft);
         }
 
         void resized() override
@@ -91,6 +99,10 @@ namespace fmrx::ui
             auto skin = row("set_skin", 64);
             const int sw = juce::jmin(110, (skin.getWidth() - 8 * (kNumSkins - 1)) / kNumSkins);
             for (auto* b : skins_) { b->setBounds(skin.removeFromLeft(sw)); skin.removeFromLeft(8); }
+
+            auto help = row("set_help", 34);
+            help_.setBounds(help.removeFromLeft(268).reduced(0, 2));
+            versionArea_ = help.withTrimmedLeft(16);
 
             noteArea_ = r.removeFromTop(20);
         }
@@ -133,13 +145,13 @@ namespace fmrx::ui
 
         juce::Rectangle<int> card() const
         {
-            return getLocalBounds().withSizeKeepingCentre(juce::jmin(720, getWidth() - 40), juce::jmin(220, getHeight() - 40));
+            return getLocalBounds().withSizeKeepingCentre(juce::jmin(720, getWidth() - 40), juce::jmin(270, getHeight() - 40));
         }
 
         AppSettings& settings_;
-        juce::TextButton close_, en_, ru_;
+        juce::TextButton close_, en_, ru_, help_;
         juce::OwnedArray<SkinButton> skins_;
         std::vector<LabelRow> labelRows_;
-        juce::Rectangle<int> noteArea_;
+        juce::Rectangle<int> noteArea_, versionArea_;
     };
 }

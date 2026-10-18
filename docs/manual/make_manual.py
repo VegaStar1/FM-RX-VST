@@ -1,0 +1,892 @@
+#!/usr/bin/env python3
+"""Генератор PDF-инструкции FM RX (RU и EN).
+
+    python3 docs/manual/make_manual.py [--version 1.0.0] [--out docs/manual]
+
+Нужны reportlab и Pillow, шрифты DejaVu Sans (есть в большинстве Linux; путь можно задать FMRX_FONT_DIR).
+Снимки интерфейса - docs/manual/img/manual_<ru|en>_<main|editor|settings|help>.jpg; их делает консольная
+проверка плагина (FmRxCheck), см. tests/plugin_check.cpp.
+Результат: "FM RX Manual RU.pdf" и "FM RX Manual EN.pdf" - их кладут установщики.
+"""
+import argparse
+import os
+import re
+import tempfile
+
+from PIL import Image, ImageDraw, ImageFont
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_LEFT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import (BaseDocTemplate, Frame, Image as RLImage, KeepTogether, NextPageTemplate,
+                                PageBreak, PageTemplate, Paragraph, Spacer, Table, TableStyle)
+from reportlab.platypus.tableofcontents import TableOfContents
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+IMG = os.path.join(HERE, "img")
+FONT_DIR = os.environ.get("FMRX_FONT_DIR", "/usr/share/fonts/truetype/dejavu")
+
+pdfmetrics.registerFont(TTFont("Sans", os.path.join(FONT_DIR, "DejaVuSans.ttf")))
+pdfmetrics.registerFont(TTFont("Sans-Bold", os.path.join(FONT_DIR, "DejaVuSans-Bold.ttf")))
+pdfmetrics.registerFont(TTFont("Sans-Oblique", os.path.join(FONT_DIR, "DejaVuSans-Oblique.ttf")))
+pdfmetrics.registerFont(TTFont("Mono", os.path.join(FONT_DIR, "DejaVuSansMono.ttf")))
+pdfmetrics.registerFontFamily("Sans", normal="Sans", bold="Sans-Bold", italic="Sans-Oblique", boldItalic="Sans-Bold")
+
+INK = colors.HexColor("#1d1d1f")
+DIM = colors.HexColor("#5b5b60")
+AMBER = colors.HexColor("#d98a1c")
+LINE = colors.HexColor("#e2dccf")
+PAPER = colors.HexColor("#faf8f3")
+DARK = colors.HexColor("#121315")
+PINK = (255, 94, 168)
+
+W, H = A4
+MARGIN = 18 * mm
+FRAME_W = W - 2 * MARGIN
+
+# ---------------------------------------------------------------- стили
+ST = {
+    "h1": ParagraphStyle("h1", fontName="Sans-Bold", fontSize=19, leading=24, textColor=INK, spaceBefore=4, spaceAfter=10),
+    "h2": ParagraphStyle("h2", fontName="Sans-Bold", fontSize=12.5, leading=16, textColor=AMBER, spaceBefore=12, spaceAfter=5),
+    "p": ParagraphStyle("p", fontName="Sans", fontSize=10, leading=14.6, textColor=INK, spaceAfter=6, alignment=TA_LEFT),
+    "li": ParagraphStyle("li", fontName="Sans", fontSize=10, leading=14.2, textColor=INK, leftIndent=14, bulletIndent=2,
+                         spaceAfter=3.5),
+    "note": ParagraphStyle("note", fontName="Sans", fontSize=9.5, leading=13.6, textColor=INK, leftIndent=8, rightIndent=8,
+                           spaceBefore=4, spaceAfter=8),
+    "cap": ParagraphStyle("cap", fontName="Sans-Oblique", fontSize=8.5, leading=11, textColor=DIM, spaceBefore=3, spaceAfter=10),
+    "cell": ParagraphStyle("cell", fontName="Sans", fontSize=8.8, leading=11.6, textColor=INK),
+    "cellb": ParagraphStyle("cellb", fontName="Sans-Bold", fontSize=8.8, leading=11.6, textColor=INK),
+    "toctitle": ParagraphStyle("toctitle", fontName="Sans-Bold", fontSize=19, leading=24, textColor=INK, spaceAfter=12),
+    "toc1": ParagraphStyle("toc1", fontName="Sans", fontSize=10.5, leading=17, textColor=INK, leftIndent=0),
+}
+
+
+def md(text):
+    """Мини-разметка: **жирный**, `код` -> теги reportlab; экранирование < > &."""
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+    text = re.sub(r"`(.+?)`", r'<font name="Mono" size="8.8">\1</font>', text)
+    return text
+
+
+# ---------------------------------------------------------------- изображения
+def crop(name, box, tmp):
+    path = os.path.join(IMG, name)
+    im = Image.open(path)
+    if box:
+        im = im.crop(box)
+    out = os.path.join(tmp, f"{os.path.splitext(name)[0]}_{'_'.join(map(str, box or (0,)))}.jpg")
+    im.convert("RGB").save(out, quality=90)
+    return out, im.size
+
+
+def annotated(name, marks, tmp):
+    """Снимок с розовыми номерами-выносками."""
+    im = Image.open(os.path.join(IMG, name)).convert("RGB")
+    d = ImageDraw.Draw(im)
+    try:
+        f = ImageFont.truetype(os.path.join(FONT_DIR, "DejaVuSans-Bold.ttf"), 30)
+    except OSError:
+        f = ImageFont.load_default()
+    for n, (x, y) in enumerate(marks, 1):
+        r = 24
+        d.ellipse((x - r, y - r, x + r, y + r), fill=PINK, outline=(255, 255, 255), width=3)
+        d.text((x, y + 1), str(n), fill=(255, 255, 255), font=f, anchor="mm")
+    out = os.path.join(tmp, "annot_" + name)
+    im.save(out, quality=90)
+    return out, im.size
+
+
+def img_flow(path, size, width):
+    w, h = size
+    return RLImage(path, width=width, height=width * h / w)
+
+
+# Области на снимке главного окна (1770 x 1200, масштаб 1.5).
+BOX = {
+    "lcd": (25, 82, 455, 415),
+    "band": (465, 82, 1745, 415),
+    "controls": (20, 420, 1750, 540),
+    "stations": (25, 545, 1010, 1180),
+    "air": (1020, 545, 1745, 890),
+    "rx": (1020, 900, 1745, 1180),
+    "header": (900, 15, 1750, 80),
+    "settings": (345, 435, 1425, 765),
+    "help": (210, 150, 1560, 1050),
+}
+MARKS = [(1180, 77), (1600, 77), (62, 250), (1100, 250), (700, 449), (150, 510), (230, 574), (1250, 574), (1210, 934)]
+
+
+# ---------------------------------------------------------------- документ
+class ManualDoc(BaseDocTemplate):
+    def __init__(self, path, lang, version, **kw):
+        super().__init__(path, pagesize=A4, leftMargin=MARGIN, rightMargin=MARGIN, topMargin=20 * mm,
+                         bottomMargin=18 * mm, title=f"FM RX {version} - " + ("Руководство пользователя" if lang == "ru" else "User manual"),
+                         author="NUWMUN", subject="FM RX VST3", **kw)
+        self.lang, self.version = lang, version
+        body = Frame(MARGIN, 18 * mm, FRAME_W, H - 38 * mm, id="body")
+        cover = Frame(MARGIN, 18 * mm, FRAME_W, H - 36 * mm, id="cover")
+        self.addPageTemplates([PageTemplate("cover", [cover], onPage=self.draw_cover),
+                               PageTemplate("body", [body], onPage=self.draw_body)])
+
+    def afterFlowable(self, f):
+        if isinstance(f, Paragraph) and f.style.name == "h1":
+            text = f.getPlainText()
+            key = "h1-" + re.sub(r"\W+", "-", text)
+            self.canv.bookmarkPage(key)
+            self.canv.addOutlineEntry(text, key, level=0)
+            self.notify("TOCEntry", (0, text, self.page, key))
+
+    def draw_cover(self, c, doc):
+        c.saveState()
+        c.setFillColor(DARK)
+        c.rect(0, 0, W, H, fill=1, stroke=0)
+        c.setFillColor(colors.HexColor("#e8e4da"))
+        c.setFont("Sans-Bold", 44)
+        c.drawString(MARGIN, H - 62 * mm, "FM\u00b7RX")
+        c.setFont("Sans", 15)
+        c.setFillColor(colors.HexColor("#f2a541"))
+        c.drawString(MARGIN, H - 74 * mm, "Руководство пользователя" if self.lang == "ru" else "User manual")
+        c.setFont("Sans", 11)
+        c.setFillColor(colors.HexColor("#8b8f96"))
+        c.drawString(MARGIN, H - 83 * mm, ("8-станционный FM-приёмник · VST3 · версия " if self.lang == "ru"
+                                           else "8-station FM band receiver · VST3 · version ") + self.version)
+        img = os.path.join(IMG, f"manual_{self.lang}_main.jpg")
+        iw = W - 2 * MARGIN
+        ih = iw * 1200 / 1770
+        c.drawImage(img, MARGIN, H - 95 * mm - ih, width=iw, height=ih)
+        c.setFont("Sans-Bold", 12)
+        c.setFillColor(colors.HexColor("#e8e4da"))
+        c.drawString(MARGIN, 22 * mm, "NUWMUN")
+        c.setFont("Sans", 9)
+        c.setFillColor(colors.HexColor("#8b8f96"))
+        c.drawString(MARGIN, 16 * mm, "Windows 10/11 (x64) · macOS 10.13+ (Apple Silicon, Intel)")
+        c.restoreState()
+
+    def draw_body(self, c, doc):
+        c.saveState()
+        c.setFillColor(PAPER)
+        c.rect(0, 0, W, H, fill=1, stroke=0)
+        c.setStrokeColor(LINE)
+        c.setLineWidth(0.6)
+        c.line(MARGIN, H - 13 * mm, W - MARGIN, H - 13 * mm)
+        c.setFont("Sans", 8)
+        c.setFillColor(DIM)
+        c.drawString(MARGIN, H - 11 * mm, "FM\u00b7RX " + self.version + " — " +
+                     ("Руководство пользователя" if self.lang == "ru" else "User manual"))
+        c.drawRightString(W - MARGIN, H - 11 * mm, "NUWMUN")
+        c.drawRightString(W - MARGIN, 10 * mm, str(doc.page))
+        c.restoreState()
+
+
+def build(lang, version, out_dir):
+    tmp = tempfile.mkdtemp()
+    content = CONTENT[lang](version)
+    path = os.path.join(out_dir, f"FM RX Manual {lang.upper()}.pdf")
+    doc = ManualDoc(path, lang, version)
+
+    toc = TableOfContents()
+    toc.levelStyles = [ST["toc1"]]
+    toc.dotsMinLevel = 0
+
+    story = [NextPageTemplate("body"), PageBreak(),
+             Paragraph("Содержание" if lang == "ru" else "Contents", ST["toctitle"]), toc, PageBreak()]
+
+    for item in content:
+        kind = item[0]
+        if kind == "h1":
+            story.append(PageBreak()) if item[2:] and item[2] == "break" else None
+            story.append(Paragraph(md(item[1]), ST["h1"]))
+        elif kind == "h2":
+            story.append(Paragraph(md(item[1]), ST["h2"]))
+        elif kind == "p":
+            story.append(Paragraph(md(item[1]), ST["p"]))
+        elif kind == "ul":
+            for li in item[1]:
+                story.append(Paragraph(md(li), ST["li"], bulletText="\u2022"))
+            story.append(Spacer(1, 4))
+        elif kind == "ol":
+            for i, li in enumerate(item[1], 1):
+                story.append(Paragraph(md(li), ST["li"], bulletText=f"{i}."))
+            story.append(Spacer(1, 4))
+        elif kind == "note":
+            t = Table([[Paragraph(md(item[1]), ST["note"])]], colWidths=[FRAME_W])
+            t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fff3df")),
+                                   ("LINEBEFORE", (0, 0), (0, -1), 2.5, AMBER),
+                                   ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+            story.append(Spacer(1, 2))
+            story.append(t)
+            story.append(Spacer(1, 8))
+        elif kind == "img":
+            name, box, frac, cap = item[1], item[2], item[3], item[4]
+            pth, size = crop(name.format(lang=lang), BOX.get(box) if box else None, tmp)
+            parts = [img_flow(pth, size, FRAME_W * frac)]
+            if cap:
+                parts.append(Paragraph(md(cap), ST["cap"]))
+            story.append(KeepTogether(parts))
+        elif kind == "annot":
+            pth, size = annotated(f"manual_{lang}_main.jpg", MARKS, tmp)
+            story.append(img_flow(pth, size, FRAME_W))
+            story.append(Spacer(1, 8))
+        elif kind == "table":
+            header, rows, widths = item[1], item[2], item[3]
+            data = [[Paragraph(md(h), ST["cellb"]) for h in header]]
+            data += [[Paragraph(md(c), ST["cell"]) for c in r] for r in rows]
+            t = Table(data, colWidths=[FRAME_W * w for w in widths], repeatRows=1)
+            t.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#efe9dc")),
+                ("LINEBELOW", (0, 0), (-1, -1), 0.4, LINE),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+            ]))
+            story.append(t)
+            story.append(Spacer(1, 10))
+        elif kind == "break":
+            story.append(PageBreak())
+    doc.multiBuild(story)
+    return path
+
+
+# ---------------------------------------------------------------- тексты
+PRESETS = [
+    ("CLEAN FM", "Modern clean reception, almost no noise.", "Чистый современный приём, почти без шума."),
+    ("VINTAGE HI-FI", "Warm 70s tuner: wide IF, gentle drift, no AFC.", "Тёплый тюнер 70-х: широкая ПЧ, лёгкий дрейф, без AFC."),
+    ("CAR RADIO", "On the move: fast fading, some multipath.", "В дороге: быстрые замирания, немного многолучёвости."),
+    ("POCKET RADIO", "Tiny mono speaker, narrow and boxy.", "Маленький моно-динамик, узко и «коробочно»."),
+    ("DISTANT STATION", "Far away: the station barely rises above the hiss.", "Далёкая станция: едва поднимается над шумом."),
+    ("NIGHT DRIVE", "Late highway: slow fades, soft instability.", "Ночное шоссе: медленные замирания, мягкая нестабильность."),
+    ("HIP-HOP RADIO", "Punchy radio intro: quick catches, grain, speaker colour.", "Плотное радио-интро: быстрый захват, зерно, окраска динамика."),
+    ("LO-FI TAPE RADIO", "Wobbly and dusty, like a radio recorded to cassette.", "Плывущий и пыльный, как радио, записанное на кассету."),
+    ("STORM", "Thunderstorm: crackles, deep fades, unstable signal.", "Гроза: треск, глубокие провалы, нестабильный сигнал."),
+    ("LOST SIGNAL", "Signal drowning in noise; stations are hard to catch.", "Сигнал тонет в шуме, станции ловятся с трудом."),
+    ("TUNING SWEEP", "Wide zones and no mute: long noisy sweeps between stations.", "Широкие зоны без приглушения: длинные шумные переходы."),
+    ("DX OVERSEAS", "Long-distance reception: narrow IF, slow deep fades.", "Дальний приём: узкая ПЧ, медленные глубокие замирания."),
+]
+
+
+def content_ru(v):
+    return [
+        ("h1", "1. Что такое FM·RX"),
+        ("p", "**FM·RX** — VST3-плагин, виртуальный FM-диапазон 87.5–108 МГц. На нём одновременно «вещают» до восьми "
+              "станций: аудиофайлы или звук дорожки. Вы настраиваетесь между ними, как на настоящем приёмнике: крутите шкалу, "
+              "жмёте ПОИСК, ловите станцию сквозь шум."),
+        ("p", "Главное отличие от «радио-эффектов»: звук проходит **настоящую частотную модуляцию**, эфир и приёмник. "
+              "Поэтому свист и искажения на расстройке, захват сильной станции, прорыв соседки при широком фильтре и распад "
+              "стерео на слабом сигнале получаются сами, а не имитируются фильтрами."),
+        ("h2", "Для чего"),
+        ("ul", ["интро и переходы «переключение радиостанций» в треках и подкастах;",
+                "звук радиоприёмника в кадре — кино, игры, саунд-дизайн;",
+                "лоу-фай, хип-хоп и эмбиент-текстуры: шум эфира, замирания, окраска динамика;",
+                "живые переходы между частями трека автоматизацией ручки TUNE."]),
+        ("h2", "Системные требования"),
+        ("table", ["", ""], [
+            ["Windows", "Windows 10 или 11, 64-бит; DAW с поддержкой VST3"],
+            ["macOS", "macOS 10.13 и новее; Apple Silicon и Intel (универсальный плагин); DAW с поддержкой VST3"],
+            ["Формат", "VST3 (эффект, стерео вход и выход)"],
+            ["Частота дискретизации", "44.1–192 кГц"],
+            ["Задержка", "около 32 сэмплов при 48 кГц (сообщается DAW автоматически)"],
+            ["Нагрузка", "порядка 10–15 % одного ядра при трёх станциях рядом со стрелкой; дальние станции почти не тратят ресурсы"],
+        ], [0.28, 0.72]),
+
+        ("h1", "2. Установка", "break"),
+        ("h2", "Windows"),
+        ("ol", ["Запустите `FM-RX-" + v + "-Windows-Setup.exe` и выберите язык установщика.",
+                "Подтвердите запрос прав администратора — плагин ставится в общую папку для всех пользователей.",
+                "Нажмите «Установить». На последнем шаге можно сразу открыть эту инструкцию.",
+                "Откройте DAW и пересканируйте плагины (см. ниже)."]),
+        ("p", "Куда ставятся файлы:"),
+        ("ul", ["плагин — `C:\\Program Files\\Common Files\\VST3\\FM RX.vst3`;",
+                "PDF-инструкции — `C:\\Program Files\\NUWMUN\\FM RX`, ярлык — в меню «Пуск» → NUWMUN."]),
+        ("p", "Удаление: «Параметры» → «Приложения» → FM RX → «Удалить». Обновление: просто запустите установщик новой версии "
+              "поверх старой."),
+        ("h2", "macOS"),
+        ("ol", ["Откройте `FM-RX-" + v + "-macOS.pkg`.",
+                "Пройдите шаги установщика и введите пароль администратора.",
+                "Откройте DAW и пересканируйте плагины."]),
+        ("p", "Куда ставятся файлы:"),
+        ("ul", ["плагин — `/Library/Audio/Plug-Ins/VST3/FM RX.vst3`;",
+                "PDF-инструкции — `/Library/Application Support/NUWMUN/FM RX`."]),
+        ("p", "Удаление: удалите эти две папки (в Finder: «Переход» → «Переход к папке…»)."),
+        ("note", "Если macOS пишет, что установщик от неустановленного разработчика, нажмите на файл правой кнопкой → «Открыть» "
+                 "или откройте «Системные настройки» → «Конфиденциальность и безопасность» → «Всё равно открыть»."),
+        ("h2", "Пересканирование плагинов в DAW"),
+        ("table", ["DAW", "Где"], [
+            ["Ableton Live", "Settings → Plug-Ins: включите «Use VST3 Plug-In System Folders» и нажмите Rescan"],
+            ["FL Studio", "Options → Manage plugins → Find installed plugins"],
+            ["Cubase / Nuendo", "Studio → VST Plug-in Manager (обычно находит сам при запуске)"],
+            ["Reaper", "Options → Preferences → Plug-ins → VST → Re-scan"],
+            ["Studio One", "сканирует при запуске; иначе Options → Locations → VST Plug-ins"],
+            ["Bitwig Studio", "Settings → Locations → Plug-ins: проверьте, что включена системная папка VST3"],
+        ], [0.25, 0.75]),
+        ("p", "FM·RX появится как **эффект** от **NUWMUN**. Вставьте его на любую аудиодорожку или на отдельную пустую "
+              "дорожку — станции играют независимо от транспорта DAW."),
+
+        ("h1", "3. Первый запуск и помощь", "break"),
+        ("p", "При первом открытии окна плагина появляется краткая помощь: шесть разделов слева, текст справа. Листайте "
+              "кнопками ДАЛЕЕ / НАЗАД или стрелками клавиатуры; Esc закрывает окно."),
+        ("ul", ["**Больше не показывать при запуске** — отметьте, и помощь перестанет появляться сама. Пока галочка не стоит, "
+                "окно показывается при первом открытии плагина в каждом запуске DAW (не чаще одного раза за запуск).",
+                "**Полная инструкция (PDF)** — открывает этот документ (его кладёт установщик).",
+                "Вернуть помощь в любой момент: шестерёнка → **Помощь** → «Открыть помощь»."]),
+        ("img", "manual_{lang}_help.jpg", "help", 0.92, "Окно помощи"),
+
+        ("h1", "4. Обзор окна", "break"),
+        ("annot",),
+        ("ol", ["**Пресеты** — листать стрелками, клик по имени — список, сохранение и удаление.",
+                "**STEREO / MONO, AFC и шестерёнка** — режим стерео, автоподстройка частоты, настройки.",
+                "**Табло** — частота, имя станции (RDS), индикаторы, S-метр, SNR и AFC.",
+                "**Шкала диапазона** — станции, их зоны приёма и стрелка настройки.",
+                "**Полоса управления** — ПОИСК ◀ ▶, шаг ±0.05 МГц, ползунок TUNE, СКАН, СТОП, LOCK, MUTE.",
+                "**Строка ПОИСК** — скорость и чувствительность поиска, громкость щелчков кнопок.",
+                "**Станции** — восемь передатчиков; клик по мини-волне открывает редактор файла.",
+                "**Эфир · канал** — шум, замирания, отражения, помехи, дрейф и зоны приёма.",
+                "**Приёмник** — ПЧ-фильтр, стерео, шумодав, срез ВЧ, динамик, выход, демодулятор и деэмфазис."]),
+        ("p", "Размер окна меняется уголком справа внизу; размер запоминается в проекте."),
+
+        ("h1", "5. Станции", "break"),
+        ("img", "manual_{lang}_main.jpg", "stations", 0.85, "Панель станций"),
+        ("p", "Каждая из восьми строк — отдельный передатчик со своей частотой и мощностью. Элементы строки слева направо:"),
+        ("table", ["Элемент", "Что делает"], [
+            ["Номер", "Настроиться на станцию (стрелка переезжает на её частоту)."],
+            ["Имя", "Двойной клик — переименовать (до 16 символов). Имя показывается на табло как RDS. По умолчанию — имя файла."],
+            ["Мини-волна", "Обзор файла с маркерами обрезки (зелёный — начало, красный — конец). Клик — редактор файла."],
+            ["ФАЙЛ / ВХОД", "Источник: аудиофайл или звук дорожки, на которой стоит плагин."],
+            ["LOAD", "Выбрать файл. Можно просто перетащить файл на строку."],
+            ["×", "Убрать файл из станции."],
+            ["LOOP / 1-SHOT", "Играть по кругу или один раз (см. раздел 7)."],
+            ["MHz", "Частота станции 87.5–108 МГц с шагом 50 кГц. Тащите мышью; с Shift — точнее; двойной клик — ввести число."],
+            ["dB", "Мощность передатчика, −60…0 дБ. В FM слабая станция не тише, а шумнее и нестабильнее, и её легче «перебивает» сосед."],
+            ["ST", "Стерео-вещание (пилот-тон 19 кГц). Выключите — станция будет вещать в моно."],
+            ["ON", "Станция в эфире. Выключенная станция пропадает с диапазона."],
+        ], [0.2, 0.8]),
+        ("h2", "Файлы"),
+        ("ul", ["Форматы: WAV, AIFF, MP3, FLAC, OGG. Моно и стерео.",
+                "При загрузке файл приводится к частоте проекта и выравнивается по громкости (около −18 dBFS RMS), "
+                "поэтому разные станции звучат ровно. Максимальная длина — 5 минут, дальше файл обрезается.",
+                "Загрузка идёт в фоне и не прерывает звук. Пока файл грузится, в строке написано «загрузка…»."]),
+        ("note", "Проект хранит **путь** к файлу, а не сам звук. Если переместить или удалить файл, в строке появится "
+                 "«файл не найден». Держите станции в папке проекта или соберите проект средствами DAW перед переносом."),
+        ("h2", "Вход дорожки (ВХОД)"),
+        ("p", "В режиме ВХОД станция передаёт звук дорожки, на которую вставлен FM·RX. Так можно «пустить в эфир» вокал, "
+              "сэмплер или шину: поставьте плагин на нужную дорожку и переключите одну из станций на ВХОД. Остальные станции "
+              "при этом продолжают играть файлы. Для станции-входа режимы LOOP/1-SHOT и редактор не используются."),
+
+        ("h1", "6. Настройка и поиск", "break"),
+        ("img", "manual_{lang}_main.jpg", "band", 1.0, "Шкала диапазона: станции 1 и 2 голубые, настроенная станция 5 — янтарная"),
+        ("h2", "Шкала"),
+        ("ul", ["**Клик по пику станции** — настройка точно на неё.",
+                "**Клик по пустому месту** — стрелка переезжает туда.",
+                "**Перетаскивание** — «верньер»: 1 пиксель ≈ 10 кГц, с Shift — в пять раз точнее.",
+                "**Колесо мыши** — шаг 50 кГц, с Shift — 10 кГц.",
+                "Под пиками видны **зоны приёма** станций (раздел 9), вокруг стрелки — полоса ПЧ-фильтра.",
+                "Значки у номеров: ■ — станция остановлена кнопкой СТОП, ✓ — станция 1-SHOT доиграла."]),
+        ("h2", "Полоса управления"),
+        ("img", "manual_{lang}_main.jpg", "controls", 1.0, None),
+        ("table", ["Кнопка", "Что делает"], [
+            ["ПОИСК ◀ / ▶", "Ручка «едет» по диапазону вниз или вверх (с переходом через край), пока не встретит станцию, "
+                            "которую приёмник слышит, затем мягко доводит точно на неё. Слабые станции пропускаются. "
+                            "Если за полный круг ничего не найдено, ручка возвращается на исходную частоту."],
+            ["◀ ▶ (рядом с ползунком)", "Шаг ±0.05 МГц."],
+            ["Ползунок TUNE", "Частота настройки. Это параметр **Tune** — его удобно автоматизировать."],
+            ["СКАН", "Как поиск, но на каждой станции останавливается на 5 секунд и едет дальше."],
+            ["СТОП", "Останавливает поиск или скан на месте. Слышимая станция затихает и встаёт в начало; "
+                     "заново она начнётся, когда вы уйдёте с неё и вернётесь (или нажмёте «▶ С НАЧАЛА» в редакторе)."],
+            ["Двойной СТОП", "Всё «в самое начало»: все станции с начала, стрелка на 87.5 МГц."],
+            ["LOCK", "Фиксирует частоту: ручка, поиск и автоматизация не сдвигают стрелку, пока LOCK включён."],
+            ["MUTE", "Полностью выключает выход приёмника, вместе с шумом эфира. Включение и выключение — с двойным щелчком."],
+        ], [0.25, 0.75]),
+        ("p", "Любое движение ручки во время поиска прерывает поиск. Нажатия кнопок сопровождаются механическими щелчками."),
+        ("h2", "Строка ПОИСК"),
+        ("table", ["Ползунок", "Что делает"], [
+            ["СКОРОСТЬ", "Как быстро ручка едет при поиске и скане: от 0.6 до 8 МГц в секунду."],
+            ["ЧУВСТВИТЕЛЬНОСТЬ", "На каких станциях поиск останавливается: выше — ловит и слабые, ниже — только уверенный приём."],
+            ["ЩЕЛЧКИ КНОПОК", "Громкость механических щелчков ПОИСК / СКАН / СТОП / LOCK / MUTE. 0 — без щелчков."],
+        ], [0.25, 0.75]),
+        ("h2", "Автоматизация"),
+        ("p", "Все ручки и переключатели — параметры плагина, их видит DAW. Самый интересный — **Tune**: нарисуйте огибающую, "
+              "и стрелка будет «крутить эфир» по вашему рисунку, проходя через шум и соседние станции. Результат поиска "
+              "тоже записывается в Tune, поэтому ручка в DAW всегда показывает то, что слышно."),
+
+        ("h1", "7. LOOP и 1-SHOT", "break"),
+        ("h2", "LOOP"),
+        ("p", "Файл (или выбранный в редакторе отрезок) играет по кругу; стык сглажен коротким кроссфейдом. Станция вещает "
+              "непрерывно, даже когда вы на неё не настроены — как настоящее радио."),
+        ("h2", "1-SHOT"),
+        ("ol", ["Станция ждёт в начале и стартует, когда вы на неё настроились (вручную или поиском).",
+                "Доиграв, станция выходит из эфира (на шкале — значок ✓).",
+                "Через полсекунды приёмник **сам запускает поиск** вверх от её частоты и находит следующую станцию.",
+                "Если за полный круг ничего не прошло порог, выбирается самая мощная из доступных станций. "
+                "Если других станций нет — та же станция играет заново.",
+                "Когда вы уходите со станции, доигравшей до конца, она снова ждёт в начале."]),
+        ("p", "Так из нескольких 1-SHOT станций получается «плейлист с переключением радио»: каждая доигрывает и сама "
+              "передаёт эфир следующей."),
+        ("note", "LOCK и СКАН не дают автопоиску сдвинуть частоту. СТОП отменяет начавшийся автопоиск."),
+
+        ("h1", "8. Редактор файла станции", "break"),
+        ("img", "manual_{lang}_editor.jpg", "stations", 0.9, "Редактор открывается на месте списка станций"),
+        ("p", "Клик по мини-волне в строке станции открывает редактор. Он обрезает начало и конец файла, **не меняя файл на "
+              "диске**: обрезка хранится в проекте. Вернуться к списку — «← СТАНЦИИ» или Esc."),
+        ("table", ["Элемент", "Что делает"], [
+            ["Маркер НАЧАЛО (зелёный)", "Откуда начинается звук. Тащите за флажок или линию."],
+            ["Маркер КОНЕЦ (красный)", "Где звук заканчивается. Затемнённые части волны не звучат."],
+            ["Время над маркерами", "Двойной клик — ввести точное время, например `0:02.500`."],
+            ["Двойной клик по маркеру", "Сбросить маркер в начало или конец файла."],
+            ["Колесо / Shift+колесо", "Зум волны / прокрутка. Полоса обзора снизу показывает весь файл и видимую часть."],
+            ["АВТО-ОБРЕЗКА ТИШИНЫ", "Срезает тишину с обоих концов по ПОРОГУ ТИШИНЫ (−80…−20 дБ, по умолчанию −50)."],
+            ["FADE-IN / FADE-OUT", "Плавное появление и затухание на краях отрезка, 0–500 мс."],
+            ["▶ С НАЧАЛА", "Настраивает приёмник на эту станцию и запускает её с маркера НАЧАЛО — слушаете через радио."],
+            ["LOOP / 1-SHOT", "Режим воспроизведения станции (тот же, что в строке)."],
+            ["СБРОС", "Весь файл, fade по умолчанию."],
+            ["Имя", "Двойной клик — переименовать станцию."],
+        ], [0.3, 0.7]),
+        ("p", "Маркеры «прилипают» к ближайшему переходу волны через ноль, поэтому на стыках нет щелчков. LOOP крутит "
+              "именно отрезок НАЧАЛО–КОНЕЦ, 1-SHOT играет его один раз, а СТОП и повторная настройка возвращают станцию "
+              "на НАЧАЛО."),
+
+        ("h1", "9. Зона приёма", "break"),
+        ("p", "Две ручки в панели «Эфир · канал» задают, как станция появляется из шума, когда вы к ней подкручиваете."),
+        ("ul", ["**ЧИСТАЯ ЗОНА** (0–1.5 МГц, по умолчанию 60 кГц) — половина ширины области вокруг станции, где она приходит "
+                "полностью и звучит чисто.",
+                "**ШУМОВАЯ ЗОНА** (20 кГц–3 МГц, по умолчанию 350 кГц) — ширина перехода по обе стороны: в нём уровень станции "
+                "плавно падает до −80 дБ, и она тонет в шуме эфира."]),
+        ("p", "На шкале зоны нарисованы под каждой станцией: плотная полоса — чистая зона, градиент — шумовая. Они меняют "
+              "ширину вместе с ручками."),
+        ("ul", ["Узкая чистая и узкая шумовая зоны — станции «щёлкают», как на цифровом тюнере.",
+                "Узкая чистая и широкая шумовая — долгий выход из шума, как при медленном вращении старого приёмника.",
+                "Широкие зоны и выключенный ШУМОДАВ — длинные «плывущие» переходы (пресет TUNING SWEEP)."]),
+        ("p", "Поиск пользуется теми же зонами: он останавливается там, где станция поднимается над шумом выше порога "
+              "чувствительности."),
+
+        ("h1", "10. Эфир · канал", "break"),
+        ("img", "manual_{lang}_main.jpg", "air", 0.75, None),
+        ("table", ["Ручка", "Диапазон", "Что делает"], [
+            ["ШУМ", "−100…−20 дБ", "Уровень шума эфира относительно несущей. Чем выше, тем раньше станции тонут в шипении."],
+            ["ЗАМИРАНИЯ", "0–100 %", "Глубина рэлеевских замираний — сигнал то пропадает, то возвращается, как в движении."],
+            ["СКОРОСТЬ", "0.05–10 Гц", "Как часто происходят замирания."],
+            ["ОТРАЖЕНИЯ", "0–100 %", "Многолучёвость: отражённый от зданий сигнал с задержкой. Даёт характерные искажения на провалах."],
+            ["ЩЕЛЧКИ", "0–100 %", "Импульсные помехи — треск, как от грозы или искрящего мотора."],
+            ["ДРЕЙФ", "0–100 %", "Медленный уход частоты гетеродина: станция «плывёт». С AFC приёмник её подтягивает."],
+            ["ЧИСТАЯ ЗОНА", "0–1.5 МГц", "См. раздел 9."],
+            ["ШУМОВАЯ ЗОНА", "20 кГц–3 МГц", "См. раздел 9."],
+        ], [0.2, 0.18, 0.62]),
+
+        ("h1", "11. Приёмник и табло", "break"),
+        ("img", "manual_{lang}_main.jpg", "rx", 0.75, None),
+        ("table", ["Элемент", "Что делает"], [
+            ["ПОЛОСА ПЧ (40–200 кГц)", "Ширина ПЧ-фильтра. Уже — меньше прорываются соседи, но больше искажений на громких местах. "
+                                      "Шире — чище, но соседняя станция может «влезть»."],
+            ["БЛЕНД", "Как рано стерео уходит в моно на слабом сигнале."],
+            ["ШУМОДАВ", "Приглушает шипение между станциями и на слабом сигнале (soft mute)."],
+            ["СРЕЗ ВЧ", "Срезает верха на слабом сигнале — шум становится мягче."],
+            ["ДИНАМИК", "Окраска маленьким динамиком: от полного диапазона до «карманного» звука."],
+            ["ВЫХОД (−24…+12 дБ)", "Выходной уровень. На выходе стоит мягкий ограничитель."],
+            ["QUAD / PLL", "Тип демодулятора. По-разному звучат на расстройке и слабом сигнале — попробуйте оба."],
+            ["50 µs / 75 µs / Off", "Деэмфазис: 50 мкс — Европа, 75 мкс — США, Off — без коррекции (ярче)."],
+            ["STEREO / MONO", "Авто-стерео или принудительное моно (в шапке)."],
+            ["AFC", "Автоподстройка частоты: когда ручка стоит, приёмник «дотягивает» на сильную станцию."],
+        ], [0.27, 0.73]),
+        ("h2", "Табло"),
+        ("img", "manual_{lang}_main.jpg", "lcd", 0.45, None),
+        ("ul", ["**STEREO** — горит, когда принимается стерео.",
+                "**НАСТР. / ПОИСК / СКАН / LOCK** — состояние приёмника; во время поиска мигает.",
+                "**MUTE** — горит, когда включён MUTE.",
+                "Крупно — частота настройки, ниже — имя станции (RDS).",
+                "Столбики — S-метр (сила сигнала), справа — отношение сигнал/шум (SNR) и поправка AFC."]),
+
+        ("h1", "12. Пресеты", "break"),
+        ("p", "Пресет задаёт характер эфира и приёмника: шум, замирания, зоны, фильтры, динамик, AFC. **Станции, частота, "
+              "MUTE и щелчки пресетом не меняются** — можно листать пресеты, не теряя своих файлов."),
+        ("ul", ["Стрелки ◀ ▶ в шапке листают пресеты по кругу; клик по имени — полный список.",
+                "Звёздочка после имени (`NIGHT DRIVE *`) — вы изменили что-то после загрузки пресета.",
+                "«Сохранить пресет…» — свой пресет; он появится в разделе «Мои» во всех проектах.",
+                "«Удалить пресет» — для своих пресетов."]),
+        ("table", ["Пресет", "Характер"], [[n, ru] for n, en, ru in PRESETS], [0.3, 0.7]),
+        ("p", "Свои пресеты лежат в файлах `*.fmrxpreset`: Windows — `%APPDATA%\\NUWMUN\\FM RX\\Presets`, "
+              "macOS — `~/Library/NUWMUN/FM RX/Presets`. Их можно копировать между компьютерами."),
+
+        ("h1", "13. Настройки", "break"),
+        ("img", "manual_{lang}_settings.jpg", "settings", 0.85, "Шестерёнка в правом верхнем углу"),
+        ("ul", ["**Язык** — русский или английский. Переключается сразу, без перезапуска.",
+                "**Скин** — пять цветовых тем: «Графит и янтарь», «Полночный синий», «Зелёный VFD», «Слоновая кость», "
+                "«Багровая ночь».",
+                "**Помощь** — снова открыть окно помощи."]),
+        ("p", "Язык и скин действуют во всех проектах и всех экземплярах плагина. Остальное (ручки, станции, обрезка) "
+              "сохраняется в каждом проекте отдельно."),
+
+        ("h1", "14. Советы и рецепты", "break"),
+        ("h2", "Интро «переключение радио»"),
+        ("ol", ["Загрузите 3–4 коротких фрагмента в станции, режим 1-SHOT.",
+                "Выберите пресет HIP-HOP RADIO или CAR RADIO.",
+                "Настройтесь на первую станцию: дальше приёмник сам переключает станции по мере окончания фрагментов."]),
+        ("h2", "Переход между частями трека"),
+        ("p", "Поставьте FM·RX на шину, переключите станцию 1 на ВХОД, а на соседнюю частоту положите другую часть или "
+              "семпл. Автоматизируйте Tune от одной станции к другой — переход пройдёт через шум и свист."),
+        ("h2", "Радио «за стеной»"),
+        ("p", "ДИНАМИК 70–90 %, MONO, СРЕЗ ВЧ повыше, ШУМ около −45 дБ — и эквалайзер DAW после плагина."),
+        ("h2", "Медленная «охота» за станцией"),
+        ("p", "ЧИСТАЯ ЗОНА 20–40 кГц, ШУМОВАЯ ЗОНА 600 кГц и больше, ШУМОДАВ на минимум, AFC выключен. Автоматизируйте Tune "
+              "плавной кривой."),
+
+        ("h1", "15. Вопросы и неполадки", "break"),
+        ("table", ["Проблема", "Что сделать"], [
+            ["Плагина нет в DAW", "Пересканируйте плагины (раздел 2). Проверьте, что DAW 64-битная и видит системную папку VST3."],
+            ["Нет звука", "Проверьте: в станциях есть файлы и включён ON; стрелка стоит на станции (табло — НАСТР.); выключен MUTE; "
+                          "ВЫХОД не на минимуме."],
+            ["Между станциями тишина вместо шума", "Это ШУМОДАВ. Уменьшите его, если нужен шум между станциями."],
+            ["«файл не найден»", "Файл перемещён или удалён. Нажмите LOAD (или перетащите файл на строку) и укажите его новое место — обрезка и имя станции сохранятся."],
+            ["Станция «плывёт» или искажается", "Включите AFC, уменьшите ДРЕЙФ, расширьте ПОЛОСУ ПЧ, увеличьте мощность станции (dB)."],
+            ["Поиск проскакивает станцию", "Повысьте ЧУВСТВИТЕЛЬНОСТЬ или мощность станции; уменьшите ШУМ."],
+            ["Поиск не останавливается", "Возможно, все станции слишком слабые для текущего ШУМА — после полного круга ручка вернётся. "
+                                         "Нажмите СТОП."],
+            ["Окно помощи появляется снова", "Отметьте «Больше не показывать при запуске» в окне помощи."],
+            ["Высокая нагрузка на процессор", "Нагрузка растёт со станциями рядом со стрелкой. Разнесите частоты или выключите лишние станции."],
+        ], [0.33, 0.67]),
+
+        ("h1", "16. Параметры для автоматизации", "break"),
+        ("p", "Так параметры называются в DAW (имена на английском, одинаковые во всех языках интерфейса)."),
+        ("table", ["Параметр", "Диапазон", "Где в окне"], PARAMS_RU, [0.3, 0.3, 0.4]),
+
+        ("h1", "17. О программе и лицензии", "break"),
+        ("p", "FM·RX " + v + " © NUWMUN. Все права защищены."),
+        ("p", "DSP-алгоритмы (ЧМ-модулятор, модель канала, демодуляторы) основаны на открытой библиотеке radiofm © 2025 Henrik "
+              "Forssell, лицензия MIT. Идея плагина вдохновлена Max for Live-устройством FM Radio от SSLL DSP."),
+        ("p", "Сделано на JUCE. VST — товарный знак Steinberg Media Technologies GmbH."),
+    ]
+
+
+def content_en(v):
+    return [
+        ("h1", "1. What FM·RX is"),
+        ("p", "**FM·RX** is a VST3 plug-in: a virtual FM band from 87.5 to 108 MHz. Up to eight stations broadcast on it at "
+              "once — audio files or the audio of your track — and you tune between them like on a real radio: turn the dial, "
+              "press SEARCH, catch a station through the noise."),
+        ("p", "Unlike typical \"radio effects\", the sound goes through **real frequency modulation**, the air and a receiver. "
+              "Whistles and distortion when detuned, capture of the stronger station, a neighbour breaking through a wide filter "
+              "and stereo collapsing on a weak signal all happen by themselves rather than being faked with filters."),
+        ("h2", "What it's for"),
+        ("ul", ["\"switching radio stations\" intros and transitions in tracks and podcasts;",
+                "an on-screen radio for film, games and sound design;",
+                "lo-fi, hip-hop and ambient textures: air noise, fades, speaker colour;",
+                "live transitions between song sections by automating the TUNE dial."]),
+        ("h2", "System requirements"),
+        ("table", ["", ""], [
+            ["Windows", "Windows 10 or 11, 64-bit; a VST3 host"],
+            ["macOS", "macOS 10.13 or later; Apple Silicon and Intel (universal binary); a VST3 host"],
+            ["Format", "VST3 (effect, stereo in and out)"],
+            ["Sample rates", "44.1–192 kHz"],
+            ["Latency", "about 32 samples at 48 kHz (reported to the host automatically)"],
+            ["CPU", "around 10–15 % of one core with three stations near the dial; distant stations cost almost nothing"],
+        ], [0.28, 0.72]),
+
+        ("h1", "2. Installation", "break"),
+        ("h2", "Windows"),
+        ("ol", ["Run `FM-RX-" + v + "-Windows-Setup.exe` and pick the installer language.",
+                "Confirm the administrator prompt — the plug-in goes to the shared folder for all users.",
+                "Click Install. On the last page you can open this manual right away.",
+                "Open your DAW and rescan plug-ins (see below)."]),
+        ("p", "Where the files go:"),
+        ("ul", ["plug-in — `C:\\Program Files\\Common Files\\VST3\\FM RX.vst3`;",
+                "PDF manuals — `C:\\Program Files\\NUWMUN\\FM RX`, with a shortcut in Start → NUWMUN."]),
+        ("p", "Uninstall: Settings → Apps → FM RX → Uninstall. Update: just run the new installer over the old version."),
+        ("h2", "macOS"),
+        ("ol", ["Open `FM-RX-" + v + "-macOS.pkg`.",
+                "Follow the installer and enter your administrator password.",
+                "Open your DAW and rescan plug-ins."]),
+        ("p", "Where the files go:"),
+        ("ul", ["plug-in — `/Library/Audio/Plug-Ins/VST3/FM RX.vst3`;",
+                "PDF manuals — `/Library/Application Support/NUWMUN/FM RX`."]),
+        ("p", "Uninstall: delete those two folders (in Finder: Go → Go to Folder…)."),
+        ("note", "If macOS says the installer is from an unidentified developer, right-click the file → Open, or go to "
+                 "System Settings → Privacy & Security → Open Anyway."),
+        ("h2", "Rescanning plug-ins in your DAW"),
+        ("table", ["DAW", "Where"], [
+            ["Ableton Live", "Settings → Plug-Ins: turn on \"Use VST3 Plug-In System Folders\" and press Rescan"],
+            ["FL Studio", "Options → Manage plugins → Find installed plugins"],
+            ["Cubase / Nuendo", "Studio → VST Plug-in Manager (usually found automatically on start)"],
+            ["Reaper", "Options → Preferences → Plug-ins → VST → Re-scan"],
+            ["Studio One", "scans on start; otherwise Options → Locations → VST Plug-ins"],
+            ["Bitwig Studio", "Settings → Locations → Plug-ins: make sure the system VST3 folder is enabled"],
+        ], [0.25, 0.75]),
+        ("p", "FM·RX shows up as an **effect** by **NUWMUN**. Insert it on any audio track or on an empty one — stations play "
+              "regardless of the DAW transport."),
+
+        ("h1", "3. First launch and help", "break"),
+        ("p", "The first time you open the plug-in window, a short help appears: six sections on the left, text on the right. "
+              "Use NEXT / BACK or the arrow keys; Esc closes it."),
+        ("ul", ["**Don't show at startup** — tick it and the help stops appearing by itself. Until it is ticked, the help opens "
+                "the first time you open the plug-in in each DAW session (at most once per session).",
+                "**Full manual (PDF)** — opens this document (installed by the installer).",
+                "To bring the help back at any time: gear → **Help** → Open help."]),
+        ("img", "manual_{lang}_help.jpg", "help", 0.92, "The help window"),
+
+        ("h1", "4. Window overview", "break"),
+        ("annot",),
+        ("ol", ["**Presets** — step with the arrows; click the name for the list, saving and deleting.",
+                "**STEREO / MONO, AFC and the gear** — stereo mode, automatic frequency control, settings.",
+                "**Display** — frequency, station name (RDS), indicators, S-meter, SNR and AFC.",
+                "**Band display** — the stations, their reception zones and the tuning needle.",
+                "**Control strip** — SEARCH ◀ ▶, ±0.05 MHz steps, the TUNE slider, SCAN, STOP, LOCK, MUTE.",
+                "**SEARCH row** — search speed and sensitivity, button click volume.",
+                "**Stations** — eight transmitters; click a mini waveform to open the file editor.",
+                "**Air · channel** — noise, fading, multipath, interference, drift and reception zones.",
+                "**Receiver** — IF filter, stereo, soft mute, hi-cut, speaker, output, demodulator and de-emphasis."]),
+        ("p", "Resize the window with the corner at the bottom right; the size is saved with the project."),
+
+        ("h1", "5. Stations", "break"),
+        ("img", "manual_{lang}_main.jpg", "stations", 0.85, "The stations panel"),
+        ("p", "Each of the eight rows is a separate transmitter with its own frequency and power. From left to right:"),
+        ("table", ["Control", "What it does"], [
+            ["Number", "Tune to this station (the needle moves to its frequency)."],
+            ["Name", "Double-click to rename (up to 16 characters). Shown on the display as RDS. Defaults to the file name."],
+            ["Mini waveform", "Overview of the file with the trim markers (green — start, red — end). Click it for the file editor."],
+            ["FILE / INPUT", "Source: an audio file, or the audio of the track the plug-in is on."],
+            ["LOAD", "Choose a file. You can also simply drop a file onto the row."],
+            ["×", "Remove the file from the station."],
+            ["LOOP / 1-SHOT", "Play in a circle or once (see section 7)."],
+            ["MHz", "Station frequency, 87.5–108 MHz in 50 kHz steps. Drag; Shift — finer; double-click — type a value."],
+            ["dB", "Transmitter power, −60…0 dB. In FM a weak station is not quieter — it is noisier, less stable, and easier for a "
+                   "neighbour to override."],
+            ["ST", "Stereo broadcast (19 kHz pilot). Turn it off for a mono station."],
+            ["ON", "Station on air. A station that is off disappears from the band."],
+        ], [0.2, 0.8]),
+        ("h2", "Files"),
+        ("ul", ["Formats: WAV, AIFF, MP3, FLAC, OGG. Mono or stereo.",
+                "On load a file is converted to the project sample rate and levelled (about −18 dBFS RMS), so stations sound "
+                "even. Maximum length is 5 minutes; longer files are cut.",
+                "Loading happens in the background without interrupting audio; the row shows \"loading…\" meanwhile."]),
+        ("note", "The project stores the **path** to the file, not the audio. If you move or delete the file, the row shows "
+                 "\"file not found\". Keep station files with your project, or use your DAW's collect-files feature before moving it."),
+        ("h2", "Track input (INPUT)"),
+        ("p", "In INPUT mode the station broadcasts the audio of the track FM·RX is on. Put the plug-in on a vocal, sampler or bus "
+              "and switch one station to INPUT to put it \"on air\"; the other stations keep playing their files. LOOP/1-SHOT and "
+              "the editor do not apply to an input station."),
+
+        ("h1", "6. Tuning and search", "break"),
+        ("img", "manual_{lang}_main.jpg", "band", 1.0, "Band display: stations 1 and 2 in cyan, tuned station 5 in amber"),
+        ("h2", "The dial"),
+        ("ul", ["**Click a station peak** — tune exactly to it.",
+                "**Click empty space** — the needle jumps there.",
+                "**Drag** — a vernier: 1 pixel ≈ 10 kHz, five times finer with Shift.",
+                "**Mouse wheel** — 50 kHz steps, 10 kHz with Shift.",
+                "Under the peaks you see each station's **reception zone** (section 9); around the needle — the IF filter band.",
+                "Marks next to the numbers: ■ — station stopped with STOP, ✓ — a 1-SHOT station has finished."]),
+        ("h2", "Control strip"),
+        ("img", "manual_{lang}_main.jpg", "controls", 1.0, None),
+        ("table", ["Button", "What it does"], [
+            ["SEARCH ◀ / ▶", "The dial moves down or up the band (wrapping around) until it meets a station the receiver can hear, "
+                             "then settles exactly on it. Weak stations are skipped. If a full circle finds nothing, the dial returns "
+                             "to where it started."],
+            ["◀ ▶ (next to the slider)", "±0.05 MHz steps."],
+            ["TUNE slider", "The tuning frequency. This is the **Tune** parameter — great for automation."],
+            ["SCAN", "Like search, but stops on every station for 5 seconds and moves on."],
+            ["STOP", "Stops search or scan where it is. The station you hear fades and rewinds to its start; it starts again "
+                     "when you tune away and back (or press ▶ FROM START in the editor)."],
+            ["Double STOP", "Back to the very beginning: all stations from the start, needle to 87.5 MHz."],
+            ["LOCK", "Holds the frequency: the dial, search and automation cannot move the needle while LOCK is on."],
+            ["MUTE", "Silences the receiver output completely, air noise included. Switching it makes a double click."],
+        ], [0.25, 0.75]),
+        ("p", "Moving the dial during a search cancels the search. Button presses come with mechanical clicks."),
+        ("h2", "SEARCH row"),
+        ("table", ["Slider", "What it does"], [
+            ["SPEED", "How fast the dial moves while searching and scanning: 0.6 to 8 MHz per second."],
+            ["SENSITIVITY", "Which stations search stops on: higher catches weak ones too, lower — only solid reception."],
+            ["BUTTON CLICKS", "Volume of the mechanical clicks of SEARCH / SCAN / STOP / LOCK / MUTE. 0 — no clicks."],
+        ], [0.25, 0.75]),
+        ("h2", "Automation"),
+        ("p", "Every knob and switch is a plug-in parameter your DAW can automate. The most fun is **Tune**: draw an envelope and "
+              "the needle sweeps the band along it, through noise and neighbouring stations. Search results are written back to "
+              "Tune too, so the DAW always shows what you hear."),
+
+        ("h1", "7. LOOP and 1-SHOT", "break"),
+        ("h2", "LOOP"),
+        ("p", "The file (or the region chosen in the editor) plays in a circle; the seam is smoothed with a short crossfade. "
+              "The station broadcasts continuously even when you are not tuned to it — like real radio."),
+        ("h2", "1-SHOT"),
+        ("ol", ["The station waits at its start and begins when you tune to it (by hand or by search).",
+                "When it finishes, the station goes off air (✓ on the band).",
+                "Half a second later the receiver **starts a search by itself**, upwards from that frequency, and finds the next station.",
+                "If a full circle finds nothing above the threshold, the strongest available station is chosen. If there are no "
+                "other stations, the same one plays again.",
+                "When you tune away from a finished station, it waits at its start again."]),
+        ("p", "A few 1-SHOT stations make a \"playlist with radio switching\": each plays to the end and hands the air to the next."),
+        ("note", "LOCK and SCAN keep the automatic search from moving the frequency. STOP cancels an automatic search in progress."),
+
+        ("h1", "8. Station file editor", "break"),
+        ("img", "manual_{lang}_editor.jpg", "stations", 0.9, "The editor opens in place of the station list"),
+        ("p", "Click a station's mini waveform to open the editor. It trims the start and end of the file **without changing the "
+              "file on disk**: the trim is saved with the project. Back to the list — ← STATIONS or Esc."),
+        ("table", ["Control", "What it does"], [
+            ["START marker (green)", "Where the sound starts. Drag the flag or the line."],
+            ["END marker (red)", "Where the sound ends. The darkened parts of the waveform do not play."],
+            ["Times above the markers", "Double-click to type an exact time, e.g. `0:02.500`."],
+            ["Double-click a marker", "Reset it to the start or end of the file."],
+            ["Wheel / Shift+wheel", "Zoom / scroll. The overview strip below shows the whole file and the visible part."],
+            ["AUTO-TRIM SILENCE", "Cuts silence at both ends using the SILENCE THRESHOLD (−80…−20 dB, default −50)."],
+            ["FADE-IN / FADE-OUT", "Smooth fades at the edges of the region, 0–500 ms."],
+            ["▶ FROM START", "Tunes the receiver to this station and starts it from START — you hear it through the radio."],
+            ["LOOP / 1-SHOT", "The station's playback mode (same as in the row)."],
+            ["RESET", "Whole file, default fades."],
+            ["Name", "Double-click to rename the station."],
+        ], [0.3, 0.7]),
+        ("p", "Markers snap to the nearest zero crossing, so the edges do not click. LOOP repeats exactly the START–END region, "
+              "1-SHOT plays it once, and STOP or re-tuning returns the station to START."),
+
+        ("h1", "9. Reception zone", "break"),
+        ("p", "Two knobs in the Air · channel panel set how a station emerges from the noise as you tune towards it."),
+        ("ul", ["**CLEAN ZONE** (0–1.5 MHz, default 60 kHz) — half-width of the area around a station where it arrives at full "
+                "strength and sounds clean.",
+                "**NOISE ZONE** (20 kHz–3 MHz, default 350 kHz) — width of the transition on each side: the station's level "
+                "smoothly falls to −80 dB there and it sinks into the air noise."]),
+        ("p", "The zones are drawn under each station on the band: the solid strip is the clean zone, the gradient is the noise "
+              "zone. They follow the knobs."),
+        ("ul", ["Narrow clean and narrow noise zones — stations \"snap\" in, like a digital tuner.",
+                "Narrow clean and wide noise zones — a long emergence from the hiss, like slowly turning an old radio.",
+                "Wide zones with SOFT MUTE off — long drifting transitions (the TUNING SWEEP preset)."]),
+        ("p", "Search uses the same zones: it stops where a station rises above the noise by more than the sensitivity threshold."),
+
+        ("h1", "10. Air · channel", "break"),
+        ("img", "manual_{lang}_main.jpg", "air", 0.75, None),
+        ("table", ["Knob", "Range", "What it does"], [
+            ["NOISE", "−100…−20 dB", "Air noise level relative to the carrier. Higher — stations sink into the hiss sooner."],
+            ["FADING", "0–100 %", "Depth of Rayleigh fading — the signal drops out and returns, as when moving."],
+            ["FADE RATE", "0.05–10 Hz", "How often the fades happen."],
+            ["MULTIPATH", "0–100 %", "A delayed reflection from buildings. Gives the typical distortion on fades."],
+            ["IMPULSE", "0–100 %", "Impulse interference — crackles like a thunderstorm or a sparking motor."],
+            ["DRIFT", "0–100 %", "Slow local oscillator drift: the station wanders. With AFC on, the receiver pulls it back."],
+            ["CLEAN ZONE", "0–1.5 MHz", "See section 9."],
+            ["NOISE ZONE", "20 kHz–3 MHz", "See section 9."],
+        ], [0.2, 0.18, 0.62]),
+
+        ("h1", "11. Receiver and display", "break"),
+        ("img", "manual_{lang}_main.jpg", "rx", 0.75, None),
+        ("table", ["Control", "What it does"], [
+            ["IF BW (40–200 kHz)", "IF filter width. Narrower — fewer neighbours break through, but more distortion on loud parts. "
+                                  "Wider — cleaner, but a neighbour may creep in."],
+            ["BLEND", "How early stereo falls back to mono on a weak signal."],
+            ["SOFT MUTE", "Hushes the hiss between stations and on weak signals."],
+            ["HI-CUT", "Cuts treble on weak signals — the noise gets softer."],
+            ["SPEAKER", "Small speaker colour: from full range to a pocket-radio sound."],
+            ["OUTPUT (−24…+12 dB)", "Output level. A soft limiter sits at the output."],
+            ["QUAD / PLL", "Demodulator type. They sound different when detuned and on weak signals — try both."],
+            ["50 µs / 75 µs / Off", "De-emphasis: 50 µs — Europe, 75 µs — USA, Off — no correction (brighter)."],
+            ["STEREO / MONO", "Automatic stereo or forced mono (in the header)."],
+            ["AFC", "Automatic frequency control: when the dial rests, the receiver pulls onto a strong station."],
+        ], [0.27, 0.73]),
+        ("h2", "Display"),
+        ("img", "manual_{lang}_main.jpg", "lcd", 0.45, None),
+        ("ul", ["**STEREO** — lit while stereo is received.",
+                "**TUNED / SEARCH / SCAN / LOCKED** — receiver state; blinks while searching.",
+                "**MUTED** — lit while MUTE is on.",
+                "Large digits — tuning frequency; below — station name (RDS).",
+                "Bars — S-meter (signal strength); on the right — signal-to-noise ratio (SNR) and the AFC correction."]),
+
+        ("h1", "12. Presets", "break"),
+        ("p", "A preset sets the character of the air and the receiver: noise, fading, zones, filters, speaker, AFC. **Stations, "
+              "frequency, MUTE and clicks are not changed by presets** — browse freely without losing your files."),
+        ("ul", ["The ◀ ▶ arrows in the header step through presets; click the name for the full list.",
+                "A star after the name (`NIGHT DRIVE *`) means you changed something after loading the preset.",
+                "Save preset… stores your own; it appears under User in every project.",
+                "Delete preset — for your own presets."]),
+        ("table", ["Preset", "Character"], [[n, en] for n, en, ru in PRESETS], [0.3, 0.7]),
+        ("p", "User presets are `*.fmrxpreset` files: Windows — `%APPDATA%\\NUWMUN\\FM RX\\Presets`, macOS — "
+              "`~/Library/NUWMUN/FM RX/Presets`. You can copy them between computers."),
+
+        ("h1", "13. Settings", "break"),
+        ("img", "manual_{lang}_settings.jpg", "settings", 0.85, "The gear button at the top right"),
+        ("ul", ["**Language** — English or Russian. Switches instantly, no restart.",
+                "**Skin** — five colour themes: Graphite Amber, Midnight Blue, VFD Green, Ivory Retro, Crimson Night.",
+                "**Help** — open the help window again."]),
+        ("p", "Language and skin apply to all projects and all instances. Everything else (knobs, stations, trims) is saved per "
+              "project."),
+
+        ("h1", "14. Tips and recipes", "break"),
+        ("h2", "\"Switching stations\" intro"),
+        ("ol", ["Load 3–4 short clips into stations, mode 1-SHOT.",
+                "Pick the HIP-HOP RADIO or CAR RADIO preset.",
+                "Tune to the first station — the receiver switches stations by itself as the clips end."]),
+        ("h2", "Transition between song sections"),
+        ("p", "Put FM·RX on a bus, switch station 1 to INPUT and place another section or sample on a nearby frequency. "
+              "Automate Tune from one station to the other — the transition passes through noise and whistles."),
+        ("h2", "Radio \"behind the wall\""),
+        ("p", "SPEAKER 70–90 %, MONO, higher HI-CUT, NOISE around −45 dB — and your DAW's EQ after the plug-in."),
+        ("h2", "Slowly hunting for a station"),
+        ("p", "CLEAN ZONE 20–40 kHz, NOISE ZONE 600 kHz or more, SOFT MUTE at minimum, AFC off. Automate Tune with a smooth curve."),
+
+        ("h1", "15. FAQ and troubleshooting", "break"),
+        ("table", ["Problem", "What to do"], [
+            ["The plug-in is not in my DAW", "Rescan plug-ins (section 2). Make sure the DAW is 64-bit and scans the system VST3 folder."],
+            ["No sound", "Check that stations have files and ON is lit; the needle is on a station (the display says TUNED); MUTE is off; "
+                         "OUTPUT is not at minimum."],
+            ["Silence between stations instead of noise", "That is SOFT MUTE. Turn it down if you want hiss between stations."],
+            ["\"file not found\"", "The file was moved or deleted. Press LOAD (or drop the file onto the row) and point to its new location — the trim and station name are kept."],
+            ["A station wanders or distorts", "Turn on AFC, lower DRIFT, widen IF BW, raise the station's power (dB)."],
+            ["Search skips a station", "Raise SENSITIVITY or the station's power; lower NOISE."],
+            ["Search does not stop", "All stations may be too weak for the current NOISE — after a full circle the dial returns. Press STOP."],
+            ["The help keeps appearing", "Tick Don't show at startup in the help window."],
+            ["High CPU", "Load grows with the number of stations near the needle. Spread frequencies apart or turn off unused stations."],
+        ], [0.33, 0.67]),
+
+        ("h1", "16. Automation parameters", "break"),
+        ("p", "These are the parameter names your DAW shows."),
+        ("table", ["Parameter", "Range", "In the window"], PARAMS_EN, [0.3, 0.3, 0.4]),
+
+        ("h1", "17. About and licences", "break"),
+        ("p", "FM·RX " + v + " © NUWMUN. All rights reserved."),
+        ("p", "The DSP algorithms (FM modulator, channel model, demodulators) are based on the open radiofm library © 2025 Henrik "
+              "Forssell, MIT licence. The plug-in idea was inspired by the FM Radio Max for Live device by SSLL DSP."),
+        ("p", "Made with JUCE. VST is a trademark of Steinberg Media Technologies GmbH."),
+    ]
+
+
+PARAMS = [
+    ("Tune", "87.5–108 MHz", "ползунок TUNE, шкала", "TUNE slider, band display"),
+    ("AFC", "on / off", "шапка", "header"),
+    ("Stereo", "Auto / Mono", "шапка", "header"),
+    ("Mute", "on / off", "MUTE", "MUTE"),
+    ("Noise", "−100…−20 dB", "Эфир", "Air"),
+    ("Fading", "0–100 %", "Эфир", "Air"),
+    ("Fade Rate", "0.05–10 Hz", "Эфир", "Air"),
+    ("Multipath", "0–100 %", "Эфир", "Air"),
+    ("Impulse", "0–100 %", "Эфир", "Air"),
+    ("Drift", "0–100 %", "Эфир", "Air"),
+    ("Clean Zone", "0–1500 kHz", "Эфир", "Air"),
+    ("Noise Zone", "20–3000 kHz", "Эфир", "Air"),
+    ("IF Bandwidth", "40–200 kHz", "Приёмник", "Receiver"),
+    ("Demodulator", "QUAD / PLL", "Приёмник", "Receiver"),
+    ("De-emphasis", "50 us / 75 us / Off", "Приёмник", "Receiver"),
+    ("Stereo Blend", "0–100 %", "Приёмник", "Receiver"),
+    ("Soft Mute", "0–100 %", "Приёмник", "Receiver"),
+    ("Hi-Cut", "0–100 %", "Приёмник", "Receiver"),
+    ("Speaker", "0–100 %", "Приёмник", "Receiver"),
+    ("Output", "−24…+12 dB", "Приёмник", "Receiver"),
+    ("Search Speed", "0–100 %", "строка ПОИСК", "SEARCH row"),
+    ("Search Sensitivity", "0–100 %", "строка ПОИСК", "SEARCH row"),
+    ("Button Clicks", "0–100 %", "строка ПОИСК", "SEARCH row"),
+    ("Station N On", "on / off", "станция N: ON", "station N: ON"),
+    ("Station N Frequency", "87.5–108 MHz", "станция N: MHz", "station N: MHz"),
+    ("Station N TX Level", "−60…0 dB", "станция N: dB", "station N: dB"),
+    ("Station N Stereo", "on / off", "станция N: ST", "station N: ST"),
+    ("Station N Source", "File / Input", "станция N: ФАЙЛ / ВХОД", "station N: FILE / INPUT"),
+    ("Station N Playback", "Loop / One-shot", "станция N: LOOP / 1-SHOT", "station N: LOOP / 1-SHOT"),
+]
+PARAMS_RU = [[p, r, ru] for p, r, ru, en in PARAMS]
+PARAMS_EN = [[p, r, en] for p, r, ru, en in PARAMS]
+CONTENT = {"ru": content_ru, "en": content_en}
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--version", default="1.0.0")
+    ap.add_argument("--out", default=HERE)
+    a = ap.parse_args()
+    os.makedirs(a.out, exist_ok=True)
+    for lang in ("ru", "en"):
+        print(build(lang, a.version, a.out))
+
+
+if __name__ == "__main__":
+    main()

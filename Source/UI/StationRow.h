@@ -247,7 +247,8 @@ namespace fmrx::ui
         void loadFile(const juce::File& f)
         {
             if (input_ && srcAtt_) srcAtt_->setValueAsCompleteGesture(0.f);   // файл -> источник «файл»
-            proc_.stations().meta(slot_).name = {};          // имя возьмётся из файла
+            auto& m = proc_.stations().meta(slot_);
+            if (! m.missing) m.name = {};                    // имя возьмётся из файла; при перепривязке - сохраняется
             proc_.stations().loadFileAsync(slot_, f);
         }
 

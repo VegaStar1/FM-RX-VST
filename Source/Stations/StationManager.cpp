@@ -118,11 +118,14 @@ namespace fmrx
     {
         if (slot < 0 || slot >= kNumStations) return;
         auto& m = meta(slot);
-        if (m.file != file)                                        // другой файл - обрезка сбрасывается
+        // Другой файл - обрезка сбрасывается. Исключение - перепривязка пропавшего файла (его переместили):
+        // обрезка и имя станции сохраняются.
+        const bool relink = m.missing && m.file != file;
+        if (m.file != file && ! relink)
         {
             m.trimStart = 0.0; m.trimEnd = 0.0; m.fadeInMs = 10.f; m.fadeOutMs = 20.f;
         }
-        if (m.file != file || m.name.isEmpty())
+        if ((m.file != file && ! relink) || m.name.isEmpty())
             m.name = file.getFileNameWithoutExtension().toUpperCase().substring(0, 16);
         m.file = file;
         m.loading = true; m.missing = false; m.loadFailed = false;
