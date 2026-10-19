@@ -234,8 +234,9 @@ jobs:
           cp "docs/manual/FM RX Manual EN.pdf" "dist/FM-RX-$V-Manual-EN.pdf"
           cp "docs/manual/FM RX Manual RU.pdf" "dist/FM-RX-$V-Manual-RU.pdf"
           ls -la dist
-          # Черновики не находятся по тегу - ищем в списке.
-          REL=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name==\"$TAG\") | \"\(.id) \(.draft)\"" | head -1)
+          # Черновики не находятся по тегу - ищем в списке (по тегу или, для черновика, по названию «FM RX X.Y.Z»).
+          REL=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+                --jq ".[] | select(.tag_name==\"$TAG\" or (.draft and .name==\"FM RX $V\")) | \"\(.id) \(.draft)\"" | head -1)
           ID=${REL% *}; DRAFT=${REL#* }
           if [ -n "$REL" ] && [ "$DRAFT" != "true" ]; then
             echo "::notice::release $TAG is already published - bump the version for a new release"; exit 0
@@ -248,7 +249,10 @@ jobs:
             for A in $(gh api "repos/$GITHUB_REPOSITORY/releases/$ID/assets" --jq '.[].id'); do
               gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$A"
             done
-            gh release upload "$TAG" dist/*
+            for F in dist/*; do
+              gh api -X POST "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$ID/assets?name=$(basename "$F")" \
+                     -H "Content-Type: application/octet-stream" --input "$F" --jq '.name'
+            done
           fi
           # Пока релиз - черновик, его файлы лежат по временному адресу .../download/untagged-XXXX/: ставим в описание
           # именно его (после публикации workflow release-links заменит адрес на .../download/vX.Y.Z/).
@@ -256,5 +260,8 @@ jobs:
           BASE=${URL%/*}
           sed "s#@BASE@#$BASE#g" "$RUNNER_TEMP/notes.md" > "$RUNNER_TEMP/notes-final.md"
           gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" -f body="$(cat "$RUNNER_TEMP/notes-final.md")" \
-                 -f target_commitish="$GITHUB_SHA" -f name="FM RX $V" --jq '.html_url'
+                 -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -f name="FM RX $V" -F draft=true \
+                 --jq '"\(.tag_name) draft=\(.draft) \(.html_url)"'
+          T=$(gh api "repos/$GITHUB_REPOSITORY/releases/$ID" --jq '.tag_name')
+          [ "$T" = "$TAG" ] || { echo "::error::draft tag is $T, expected $TAG"; exit 1; }
           echo "::notice::draft release $TAG ready, links: $BASE"
