@@ -17,7 +17,7 @@ jobs:
           R=repos/$GITHUB_REPOSITORY/releases
           show() { gh api "$R/$ID" --jq '"\(.tag_name) | \(.assets[0].browser_download_url // "-")"' | sed "s#^#$1: #" | while read -r L; do echo "::notice::$L"; done; }
           echo hi > probe.txt
-          gh release create v0.0.0-probe probe.txt --draft --target "$GITHUB_SHA" --title "probe" --notes "x"
+          gh release create v0.0.0-probe probe.txt --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" --title "probe" --notes "x"
           ID=$(gh api "$R?per_page=100" --jq '.[] | select(.name=="probe") | .id' | head -1)
           echo "::notice::id=$ID"
           show "created            "
