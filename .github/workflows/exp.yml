@@ -12,11 +12,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set +e
+          exec 2> >(while read -r L; do echo "::warning::stderr: $L"; done)
           R=repos/$GITHUB_REPOSITORY/releases
           show() { gh api "$R/$ID" --jq '"\(.tag_name) | \(.assets[0].browser_download_url // "-")"' | sed "s#^#$1: #" | while read -r L; do echo "::notice::$L"; done; }
           echo hi > probe.txt
           gh release create v0.0.0-probe probe.txt --draft --target "$GITHUB_SHA" --title "probe" --notes "x"
           ID=$(gh api "$R?per_page=100" --jq '.[] | select(.name=="probe") | .id' | head -1)
+          echo "::notice::id=$ID"
           show "created            "
           gh api -X PATCH "$R/$ID" -f body="b1" --jq .id >/dev/null;                                show "body only          "
           gh api -X PATCH "$R/$ID" -f tag_name=v0.0.0-probe --jq .id >/dev/null;                    show "tag only           "
