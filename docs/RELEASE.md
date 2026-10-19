@@ -13,10 +13,12 @@
    - `FM-RX-X.Y.Z-Windows.zip` and `FM-RX-X.Y.Z-macOS.zip` — installer + both PDF manuals + `INSTALL.txt`;
    - `FM-RX-X.Y.Z-Windows-Setup.exe`, `FM-RX-X.Y.Z-macOS.pkg` and the PDFs on their own.
 
-   Only repository collaborators can see a draft. While it is a draft, the download links in its description point to
-   the draft files, and every push to `main` refreshes them.
-5. Publish it: Releases → the draft → **Edit** → **Publish release**. This creates the `vX.Y.Z` tag, and the
-   `release-links` job rewrites the download links to the permanent `releases/download/vX.Y.Z/...` addresses.
+   Only repository collaborators can see a draft; every push to `main` refreshes its files and text.
+5. Publish it: Releases → the draft → **Edit** → **Publish release** (the tag `vX.Y.Z` is created on publish).
+   The download links in the description use the permanent `releases/download/vX.Y.Z/...` addresses, so they start
+   working the moment the release is published. While it is still a draft, download the files from the **Assets**
+   list at the bottom of the release page (GitHub cannot give a draft both a tag and stable file links — every edit
+   with a tag changes the draft's temporary file address).
    A published release is never touched by later pushes — bump the version for the next one.
 
 ## What the installers do
