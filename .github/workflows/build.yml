@@ -254,14 +254,28 @@ jobs:
                      -H "Content-Type: application/octet-stream" --input "$F" --jq '.name'
             done
           fi
+          # Сначала метаданные (тег, коммит, название): при их смене GitHub меняет временный адрес файлов черновика.
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" \
+                 -f name="FM RX $V" -F draft=true --jq '"\(.tag_name) draft=\(.draft)"'
           # Пока релиз - черновик, его файлы лежат по временному адресу .../download/untagged-XXXX/: ставим в описание
           # именно его (после публикации workflow release-links заменит адрес на .../download/vX.Y.Z/).
-          URL=$(gh api "repos/$GITHUB_REPOSITORY/releases/$ID/assets" --jq '.[0].browser_download_url')
-          BASE=${URL%/*}
-          sed "s#@BASE@#$BASE#g" "$RUNNER_TEMP/notes.md" > "$RUNNER_TEMP/notes-final.md"
-          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" -f body="$(cat "$RUNNER_TEMP/notes-final.md")" \
-                 -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -f name="FM RX $V" -F draft=true \
-                 --jq '"\(.tag_name) draft=\(.draft) \(.html_url)"'
-          T=$(gh api "repos/$GITHUB_REPOSITORY/releases/$ID" --jq '.tag_name')
-          [ "$T" = "$TAG" ] || { echo "::error::draft tag is $T, expected $TAG"; exit 1; }
+          for TRY in 1 2 3; do
+            URL=$(gh api "repos/$GITHUB_REPOSITORY/releases/$ID" --jq '.assets[0].browser_download_url')
+            BASE=${URL%/*}
+            sed "s#@BASE@#$BASE#g" "$RUNNER_TEMP/notes.md" > "$RUNNER_TEMP/notes-final.md"
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" -f body="$(cat "$RUNNER_TEMP/notes-final.md")" --jq '.html_url'
+            # Проверка: каждая ссылка в описании - реальный файл релиза.
+            gh api "repos/$GITHUB_REPOSITORY/releases/$ID" > "$RUNNER_TEMP/rel.json"
+            if python3 - "$RUNNER_TEMP/rel.json" <<'PY'
+          import json, re, sys
+          r = json.load(open(sys.argv[1]))
+          assets = {a["browser_download_url"] for a in r["assets"]}
+          links = re.findall(r"\]\((https://[^)]+/releases/download/[^)]+)\)", r["body"])
+          bad = [l for l in links if l not in assets]
+          print(f"tag {r['tag_name']}, {len(links)} links, {len(assets)} files, broken: {bad}")
+          sys.exit(1 if bad or not links or r["tag_name"] != "v" + r["name"].split()[-1] else 0)
+          PY
+            then break; fi
+            [ "$TRY" = 3 ] && { echo "::error::download links do not match the release files"; exit 1; }
+          done
           echo "::notice::draft release $TAG ready, links: $BASE"
