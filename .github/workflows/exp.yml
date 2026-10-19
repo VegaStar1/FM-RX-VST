@@ -1,0 +1,32 @@
+name: exp-release-api
+on:
+  push:
+    branches: [ exp-release-api ]
+permissions:
+  contents: write
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Probe draft release PATCH behaviour
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          R=repos/$GITHUB_REPOSITORY/releases
+          show() { gh api "$R/$ID" --jq '"\(.tag_name) | \(.assets[0].browser_download_url // "-")"' | sed "s#^#$1: #" | while read -r L; do echo "::notice::$L"; done; }
+          echo hi > probe.txt
+          gh release create v0.0.0-probe probe.txt --draft --target "$GITHUB_SHA" --title "probe" --notes "x"
+          ID=$(gh api "$R?per_page=100" --jq '.[] | select(.name=="probe") | .id' | head -1)
+          show "created            "
+          gh api -X PATCH "$R/$ID" -f body="b1" --jq .id >/dev/null;                                show "body only          "
+          gh api -X PATCH "$R/$ID" -f tag_name=v0.0.0-probe --jq .id >/dev/null;                    show "tag only           "
+          gh api -X PATCH "$R/$ID" -f body="b2" -f tag_name=v0.0.0-probe --jq .id >/dev/null;       show "body+tag           "
+          gh api -X PATCH "$R/$ID" -f target_commitish="$GITHUB_SHA" -f tag_name=v0.0.0-probe --jq .id >/dev/null; show "target+tag         "
+          gh api -X PATCH "$R/$ID" -f name="probe" -f tag_name=v0.0.0-probe -f body=b3 --jq .id >/dev/null;       show "name+tag+body      "
+          gh api -X PATCH "$R/$ID" -f body="b4" -f tag_name=v0.0.0-probe -F draft=true --jq .id >/dev/null;        show "body+tag+draft     "
+          gh api -X PATCH "$R/$ID" -f body="b5" -f tag_name=v0.0.0-probe -F draft=true --jq .id >/dev/null;        show "body+tag+draft (2) "
+          gh api -X DELETE "$R/$ID"
+          echo "::notice::done"
+          {
+            echo "RESULTS"
+          } >> "$GITHUB_STEP_SUMMARY"
