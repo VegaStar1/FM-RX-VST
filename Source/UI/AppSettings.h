@@ -20,8 +20,8 @@ namespace fmrx::ui
             o.osxLibrarySubFolder = "Application Support";
             props_ = std::make_unique<juce::PropertiesFile>(o);
 
-            const auto sys = juce::SystemStats::getUserLanguage().toLowerCase();
-            const auto lang = props_->getValue("language", sys.startsWith("ru") ? "ru" : "en");
+            // Первый запуск - всегда английский (основная аудитория); русский включается в настройках и запоминается.
+            const auto lang = props_->getValue("language", "en");
             currentLang() = lang == "ru" ? Lang::Ru : Lang::En;
             applySkin(skinIndexForId(props_->getValue("skin", kSkins[0].id)));
         }

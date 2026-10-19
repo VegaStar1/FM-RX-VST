@@ -1,0 +1,27 @@
+name: release-links
+
+# При публикации релиза: ссылки «Download» в описании указывали на временный адрес черновика
+# (.../releases/download/untagged-XXXX/...). Заменяем его на постоянный (.../releases/download/vX.Y.Z/...),
+# остальной текст описания (в том числе правки вручную) не трогаем.
+on:
+  release:
+    types: [ published ]
+
+permissions:
+  contents: write
+
+jobs:
+  links:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Point download links at the published tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+          ID: ${{ github.event.release.id }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/$ID" --jq '.body' > body.md
+          sed -E "s#releases/download/untagged-[A-Za-z0-9]+/#releases/download/$TAG/#g" body.md > fixed.md
+          if cmp -s body.md fixed.md; then echo "links already point at $TAG"; exit 0; fi
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" -f body="$(cat fixed.md)" --jq '.html_url'
+          grep -o "releases/download/[^/]*/" fixed.md | sort -u

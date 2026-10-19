@@ -1,55 +1,57 @@
-# Выпуск версии FM RX
+# Releasing FM RX
 
-## Как выпустить
-1. Поднять версию в `CMakeLists.txt` (`project(FmRx VERSION X.Y.Z ...)`) и обновить «Что нового» в
-   `packaging/RELEASE_NOTES.md` (`@VERSION@` подставляется сам; там же ссылки «Скачать» и шаги установки).
-2. Если менялся интерфейс или функции - обновить инструкцию:
-   - снимки: собрать `-DFMRX_BUILD_CHECK=ON`, запустить `FmRxCheck <station.wav> <out>`, скопировать
-     `manual_*.png` в `docs/manual/img/*.jpg`;
-   - PDF: `python3 docs/manual/make_manual.py --version X.Y.Z` (нужны reportlab, Pillow, шрифты DejaVu).
-3. Закоммитить и сделать push в `main`.
-4. GitHub Actions соберёт установщики, проверит их (pluginval, тестовая установка и удаление) и создаст или
-   обновит **черновик** релиза `vX.Y.Z` с файлами:
-   `FM-RX-X.Y.Z-Windows.zip` и `FM-RX-X.Y.Z-macOS.zip` (установщик + обе PDF-инструкции + INSTALL.txt),
-   а также отдельно `FM-RX-X.Y.Z-Windows-Setup.exe`, `FM-RX-X.Y.Z-macOS.pkg` и PDF.
-   Ссылки «Скачать» в описании релиза начинают работать после публикации.
-   Черновик видят только участники репозитория: скачайте файлы и загрузите их в магазин. Пока черновик не
-   опубликован, каждый push в `main` обновляет его файлы. Когда опубликуете (Releases → Edit → Publish release;
-   при этом создаётся тег `vX.Y.Z`), следующие push его не трогают - для новой версии поднимите номер.
+## How to release
+1. Bump the version in `CMakeLists.txt` (`project(FmRx VERSION X.Y.Z ...)`) and update "What's new" in
+   `packaging/RELEASE_NOTES.md` (`@VERSION@` and the download links are filled in automatically).
+2. If the interface or features changed, update the manual:
+   - screenshots: configure with `-DFMRX_BUILD_CHECK=ON`, run `FmRxCheck <station.wav> <out>` and copy
+     `manual_*.png` to `docs/manual/img/*.jpg`;
+   - PDFs: `python3 docs/manual/make_manual.py --version X.Y.Z` (needs reportlab, Pillow and DejaVu fonts).
+3. Commit and push to `main`.
+4. GitHub Actions builds and checks the installers (pluginval, test install and uninstall) and creates or updates a
+   **draft** release `vX.Y.Z` with:
+   - `FM-RX-X.Y.Z-Windows.zip` and `FM-RX-X.Y.Z-macOS.zip` — installer + both PDF manuals + `INSTALL.txt`;
+   - `FM-RX-X.Y.Z-Windows-Setup.exe`, `FM-RX-X.Y.Z-macOS.pkg` and the PDFs on their own.
 
-## Что делают установщики
+   Only repository collaborators can see a draft. While it is a draft, the download links in its description point to
+   the draft files, and every push to `main` refreshes them.
+5. Publish it: Releases → the draft → **Edit** → **Publish release**. This creates the `vX.Y.Z` tag, and the
+   `release-links` job rewrites the download links to the permanent `releases/download/vX.Y.Z/...` addresses.
+   A published release is never touched by later pushes — bump the version for the next one.
+
+## What the installers do
 | | Windows (.exe, Inno Setup) | macOS (.pkg) |
 |---|---|---|
-| Плагин | `C:\Program Files\Common Files\VST3\FM RX.vst3` | `/Library/Audio/Plug-Ins/VST3/FM RX.vst3` |
-| Инструкции | `C:\Program Files\NUWMUN\FM RX\` + ярлык в «Пуск» | `/Library/Application Support/NUWMUN/FM RX/` |
-| Языки | русский, английский | русский, английский |
-| Удаление | «Приложения» → FM RX | удалить две папки выше |
+| Plug-in | `C:\Program Files\Common Files\VST3\FM RX.vst3` | `/Library/Audio/Plug-Ins/VST3/FM RX.vst3` |
+| Manuals | `C:\Program Files\NUWMUN\FM RX\` + Start menu shortcut | `/Library/Application Support/NUWMUN/FM RX/` |
+| Installer languages | English, Russian (follows the system language) | English, Russian (follows the system language) |
+| Uninstall | Settings → Apps → FM RX | delete the two folders above |
 
-Плагин ищет PDF в этих папках (кнопка «Полная инструкция» в окне помощи).
-Windows-сборка со статической средой MSVC - Visual C++ Redistributable не нужен.
-macOS-сборка универсальная (arm64 + x86_64), минимум macOS 10.13.
+The plug-in looks for the PDF in these folders (Full manual button in the help window).
+The Windows build uses the static MSVC runtime, so no Visual C++ Redistributable is needed.
+The macOS build is universal (arm64 + x86_64), macOS 10.13 or later.
 
-## Подпись (рекомендуется перед продажей)
-Без подписи установщики работают, но:
-- **Windows** показывает SmartScreen «Неизвестный издатель» → «Подробнее» → «Выполнить в любом случае».
-- **macOS** не даёт открыть пакет двойным кликом («неустановленный разработчик») → правый клик → «Открыть».
+## Code signing (recommended before selling)
+Unsigned installers work, but:
+- **Windows** SmartScreen shows "Unknown publisher" → More info → Run anyway.
+- **macOS** refuses to open the package with a double click ("unidentified developer") → right-click → Open.
 
-Чтобы этого не было, добавьте секреты в репозиторий (Settings → Secrets and variables → Actions):
+To avoid that, add repository secrets (Settings → Secrets and variables → Actions):
 
-| Секрет | Что это |
+| Secret | What it is |
 |---|---|
-| `WIN_CERT_PFX_BASE64`, `WIN_CERT_PASSWORD` | сертификат подписи кода Windows (.pfx в base64) и пароль |
-| `MAC_CERTS_P12_BASE64`, `MAC_CERTS_PASSWORD` | экспорт из «Связки ключей» сертификатов *Developer ID Application* и *Developer ID Installer* в один .p12 (base64) и пароль |
-| `MAC_APP_SIGN_ID` | например `Developer ID Application: Ivan Ivanov (ABCDE12345)` |
-| `MAC_INSTALLER_SIGN_ID` | например `Developer ID Installer: Ivan Ivanov (ABCDE12345)` |
-| `NOTARY_APPLE_ID`, `NOTARY_PASSWORD`, `NOTARY_TEAM_ID` | Apple ID, пароль приложения (appleid.apple.com) и Team ID - для нотаризации |
+| `WIN_CERT_PFX_BASE64`, `WIN_CERT_PASSWORD` | Windows code-signing certificate (.pfx, base64) and its password |
+| `MAC_CERTS_P12_BASE64`, `MAC_CERTS_PASSWORD` | *Developer ID Application* and *Developer ID Installer* certificates exported from Keychain into one .p12 (base64) and its password |
+| `MAC_APP_SIGN_ID` | e.g. `Developer ID Application: Jane Doe (ABCDE12345)` |
+| `MAC_INSTALLER_SIGN_ID` | e.g. `Developer ID Installer: Jane Doe (ABCDE12345)` |
+| `NOTARY_APPLE_ID`, `NOTARY_PASSWORD`, `NOTARY_TEAM_ID` | Apple ID, app-specific password (appleid.apple.com) and Team ID — for notarization |
 
-Сертификаты macOS выдаёт Apple Developer Program (99 $ в год). Для Windows - любой центр сертификации подписи
-кода (OV/EV) или Azure Trusted Signing. Шаги подписи уже есть в `.github/workflows/build.yml` и
-`packaging/macos/build_pkg.sh`; они включаются сами, когда секреты заданы.
+macOS certificates come with the Apple Developer Program (USD 99 / year). For Windows, any code-signing CA (OV/EV)
+or Azure Trusted Signing. The signing steps are already in `.github/workflows/build.yml` and
+`packaging/macos/build_pkg.sh`; they switch on automatically once the secrets exist.
 
-## Лицензии перед продажей
-- **JUCE 8**: бесплатная лицензия Starter - при годовом доходе до 20 000 $; выше - Indie (до 300 000 $) или Pro.
-  Заставка JUCE в JUCE 8 не требуется (`JUCE_DISPLAY_SPLASH_SCREEN=0`).
-- **VST3**: сборка идёт с VST3 SDK, который поставляется вместе с JUCE. Логотип и слово VST - по правилам Steinberg.
-- **radiofm** (MIT, © Henrik Forssell) - упоминание есть в инструкции и `THIRD_PARTY_NOTICES.md`.
+## Licences before selling
+- **JUCE 8**: the free Starter licence covers up to USD 20,000 annual revenue; above that, Indie (up to USD 300,000)
+  or Pro. JUCE 8 does not require the splash screen (`JUCE_DISPLAY_SPLASH_SCREEN=0`).
+- **VST3**: built with the VST3 SDK bundled with JUCE. Use of the VST name and logo follows Steinberg's guidelines.
+- **radiofm** (MIT, © Henrik Forssell) — credited in the manual and `THIRD_PARTY_NOTICES.md`.

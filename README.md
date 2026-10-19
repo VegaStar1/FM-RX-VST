@@ -1,40 +1,46 @@
-# FM·RX — 8-станционный FM-приёмник (VST3)
+# FM·RX — 8-station FM band receiver (VST3)
 
-VST3-плагин на JUCE 8: до восьми стерео-станций на общем FM-диапазоне 87.5–108 МГц и виртуальный приёмник,
-которым вы между ними настраиваетесь. Идея — Max for Live-девайс [FM Radio от SSLL DSP](http://ssll.fm/fm-radio/);
-код написан с нуля, DSP — по мотивам открытых абстракций автора [hefo/maxmsp/radiofm](https://github.com/hefo/maxmsp/tree/main/radiofm) (MIT).
+A VST3 plug-in built with JUCE 8: up to eight stereo stations broadcast on one FM band (87.5–108 MHz) and a virtual
+receiver lets you tune between them. Inspired by the [FM Radio](http://ssll.fm/fm-radio/) Max for Live device by
+SSLL DSP; the code is written from scratch, with DSP based on the author's open
+[hefo/maxmsp/radiofm](https://github.com/hefo/maxmsp/tree/main/radiofm) abstractions (MIT).
 
-Главное отличие от «радио-эффектов»: звук проходит **настоящую ЧМ-модуляцию и демодуляцию**. Поэтому свист и
-искажения на расстройке, захват сильной станции, прорыв соседки при широком фильтре и распад стерео на слабом
-сигнале получаются сами, а не имитируются.
+Unlike typical "radio effects", the sound goes through **real FM modulation and demodulation**. Whistles and
+distortion when detuned, capture of the stronger station, a neighbour breaking through a wide filter and stereo
+collapsing on a weak signal all happen by themselves rather than being faked.
 
-## Что умеет
+## Download
 
-| Блок | Функции |
+Installers are attached to each [release](https://github.com/VegaStar1/FM-RX-VST/releases):
+
+| Platform | File | Installs to |
+|---|---|---|
+| Windows 10/11 (x64) | `FM-RX-<version>-Windows.zip` (installer + manuals) or `FM-RX-<version>-Windows-Setup.exe` | `C:\Program Files\Common Files\VST3` |
+| macOS 10.13+ (Apple Silicon & Intel) | `FM-RX-<version>-macOS.zip` (installer + manuals) or `FM-RX-<version>-macOS.pkg` | `/Library/Audio/Plug-Ins/VST3` |
+
+Both installers also install the PDF user manual (English and Russian, [docs/manual](docs/manual)). On first launch the
+plug-in shows a short help window; later it is under the gear button → Help.
+
+## Features
+
+| Area | What it does |
 |---|---|
-| Станции ×8 | файл (WAV, AIFF, MP3, FLAC, OGG) или вход дорожки; **LOOP** (по кругу) или **1-SHOT** (один раз, затем приёмник сам ищет следующую); частота, мощность передатчика, стерео, вкл; RDS-имя; drag & drop; мини-волна с маркерами обрезки |
-| Редактор станции | клик по строке: волна, маркеры **НАЧАЛО / КОНЕЦ** (неразрушающая обрезка, прилипают к нулю волны), fade-in / fade-out, зум и обзор, авто-обрезка тишины, «▶ С НАЧАЛА», ввод времени вручную |
-| Управление | **ПОИСК ◀ ▶** (листает диапазон до принимаемой станции, слабые пропускает), **СКАН** (пауза на каждой станции), **СТОП** (двойной - всё в начало), **LOCK**, **MUTE**; строка «ПОИСК»: скорость, чувствительность, громкость щелчков кнопок; строка «ПЕРЕХОД»: пауза и шум автоперехода после 1-SHOT, защита автоматизации TUNE |
-| Зона приёма | **CLEAN ZONE / NOISE ZONE**: где станция чистая и как долго она проступает из шума; зоны видны на шкале |
-| Передатчик | ФНЧ 15 кГц, преэмфазис 50/75 мкс, лимитер, стерео MPX (L+R, пилот 19 кГц, L−R на 38 кГц), ЧМ ±75 кГц |
-| Эфир | шум, рэлеевские замирания (глубина и скорость), многолучёвость, импульсные помехи, дрейф гетеродина; цвет шума (тон, частота, резкость) |
-| Приёмник | TUNE (автоматизируется), AFC, ПЧ-фильтр 40–200 кГц, демодулятор QUAD или PLL, стереодекодер с ФАПЧ по пилоту, авто-бленд в моно, деэмфазис, soft mute, hi-cut, окраска динамиком, выход |
-| Пресеты | 12 заводских (CLEAN FM, VINTAGE HI-FI, CAR RADIO, POCKET RADIO, DISTANT STATION, NIGHT DRIVE, HIP-HOP RADIO, LO-FI TAPE RADIO, STORM, LOST SIGNAL, TUNING SWEEP, DX OVERSEAS) + свои |
-| Настройки (⚙) | язык русский / английский, 5 скинов |
-| Интерфейс | табло частоты и RDS, S-метр и SNR, диапазон с зонами станций и стрелкой (клик, перетаскивание, колесо), изменяемый размер окна |
+| Stations ×8 | audio file (WAV, AIFF, MP3, FLAC, OGG) or the track input; **LOOP** or **1-SHOT** (plays once, then the receiver searches for the next station by itself); frequency, transmitter power, stereo, on/off; RDS name; drag & drop; mini waveform with trim markers |
+| Station editor | click a row: waveform, **START / END** markers (non-destructive trim, snap to zero crossings), fade-in / fade-out, zoom and overview, auto-trim silence, "▶ FROM START", typed times |
+| Controls | **SEARCH ◀ ▶** (sweeps the band to the next receivable station, skips weak ones), **SCAN** (stops on every station), **STOP** (double — everything from the start), **LOCK**, **MUTE**; SEARCH row: speed, sensitivity, button click volume; HAND-OVER row: pause and noise of the automatic switch after a 1-SHOT, keep Tune automation |
+| Reception zone | **CLEAN ZONE / NOISE ZONE**: where a station is clean and how slowly it rises out of the noise; drawn on the band |
+| Transmitter | 15 kHz low-pass, 50/75 µs pre-emphasis, limiter, stereo MPX (L+R, 19 kHz pilot, L−R at 38 kHz), ±75 kHz FM |
+| Air | noise, Rayleigh fading (depth and rate), multipath, impulse interference, oscillator drift; noise colour (tone, frequency, sharpness) |
+| Receiver | TUNE (automatable), AFC, 40–200 kHz IF filter, QUAD or PLL demodulator, stereo decoder with pilot PLL, auto blend to mono, de-emphasis, soft mute, hi-cut, speaker colour, output |
+| Presets | 12 factory presets (CLEAN FM, VINTAGE HI-FI, CAR RADIO, POCKET RADIO, DISTANT STATION, NIGHT DRIVE, HIP-HOP RADIO, LO-FI TAPE RADIO, STORM, LOST SIGNAL, TUNING SWEEP, DX OVERSEAS) + your own |
+| Settings (⚙) | English / Russian interface, 5 skins, help |
+| Interface | frequency and RDS display, S-meter and SNR, band view with station zones and the needle (click, drag, wheel), resizable window |
 
-Мощность передатчика влияет на шум и захват, а не на громкость — как в настоящем FM.
+Transmitter power affects noise and capture, not loudness — just like real FM.
 
-## Установка
+## Building
 
-Готовые установщики - в релизах GitHub (черновик релиза собирается автоматически при push в main, см. [docs/RELEASE.md](docs/RELEASE.md)):
-`FM-RX-<версия>-Windows-Setup.exe` (VST3 -> `C:\Program Files\Common Files\VST3`) и `FM-RX-<версия>-macOS.pkg`
-(универсальный, VST3 -> `/Library/Audio/Plug-Ins/VST3`). Оба ставят PDF-инструкцию на русском и английском
-([docs/manual](docs/manual)). При первом запуске плагин показывает краткую помощь; потом - шестерёнка -> Помощь.
-
-## Сборка
-
-Нужны CMake ≥ 3.22 и компилятор C++17. JUCE 8.0.4 скачивается автоматически (или `-DFMRX_JUCE_DIR=путь`).
+Requires CMake ≥ 3.22 and a C++17 compiler. JUCE 8.0.4 is fetched automatically (or pass `-DFMRX_JUCE_DIR=path`).
 
 ```
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
@@ -42,39 +48,40 @@ cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-Готовый плагин: `build/FmRx_artefacts/Release/VST3/FM RX.vst3`. GitHub Actions собирает его на каждый push
-(артефакт `FM-RX-vst3-win-x64`) и прогоняет тесты ядра с санитайзерами.
+The plug-in ends up in `build/FmRx_artefacts/Release/VST3/FM RX.vst3`. GitHub Actions builds Windows and macOS on every
+push, runs the core tests with sanitizers and [pluginval](https://github.com/Tracktion/pluginval), builds the
+installers, test-installs them and creates a draft release — see [docs/RELEASE.md](docs/RELEASE.md).
 
-Тесты ядра без JUCE:
+Core tests without JUCE:
 
 ```
 g++ -std=c++17 -O2 -ISource tests/test_fm.cpp Source/Engine/FmBand.cpp -o fm_tests && ./fm_tests
+g++ -std=c++17 -O2 -ISource tests/test_control.cpp -o control_tests && ./control_tests
 g++ -std=c++17 -O2 -ISource tests/render_demo.cpp Source/Engine/FmBand.cpp -o render_demo && ./render_demo demo.wav
 ```
 
-## Устройство
+## Code layout
 
-Подробно — в [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ```
 Source/
   Dsp/        FmCommon, Polyphase (×L / ÷L), FmTransmitter, AirChannel, Receiver, ClickGen, Biquad, FirstOrder, Rng
+  Engine/     FmBand — the whole band: 8 transmitters -> air -> receiver; RadioControl — search, scan, LOCK,
+              STOP/REWIND, 1-SHOT hand-over (plain C++, no JUCE)
+  Stations/   StationPrep (resampling, levelling), StationManager (lock-free loading, trims),
+              LoopPlayer (region, loop / one-shot), Waveform (peaks, auto-trim, zero crossings)
   Presets/    FactoryPresets, PresetManager
-  Engine/     FmBand — весь диапазон: 8 передатчиков -> эфир -> приёмник; RadioControl — поиск, скан, LOCK,
-              STOP/REWIND, one-shot (чистый C++, без JUCE)
-  Stations/   StationPrep (ресемплинг, нормализация), StationManager (загрузка без блокировок, обрезка),
-              LoopPlayer (отрезок, loop / one-shot), Waveform (волна, авто-обрезка, переход через ноль)
-  UI/         Theme (скины), Strings (RU/EN), AppSettings, TunerDisplay, StationRow, StationEditor, WaveDraw, SettingsPanel
+  UI/         Theme (skins), Strings (EN/RU), AppSettings, HelpPanel, TunerDisplay, StationRow, StationEditor,
+              WaveDraw, SettingsPanel
   Parameters.h, PluginProcessor, PluginEditor
-tests/        test_fm (DSP), test_control (поиск, one-shot, щелчки), test_player, render_demo, plugin_check
+packaging/    Windows (Inno Setup) and macOS (pkg) installers, release notes, INSTALL.txt
+docs/manual/  user manual generator, screenshots and PDFs
+tests/        test_fm (DSP), test_control (search, 1-SHOT, clicks), test_player, render_demo, plugin_check
 ```
 
-## Дальше
+## Licences
 
-- FM·TX — лёгкий плагин-передатчик на других дорожках (звук в приёмник через общий буфер)
-- живой FFT-спектр эфира, сайдчейн как отдельный источник
-
-## Лицензии
-
-DSP-алгоритмы основаны на [radiofm](https://github.com/hefo/maxmsp/tree/main/radiofm) © 2025 Henrik Forssell, MIT —
-см. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). JUCE распространяется на своих условиях (AGPLv3 / коммерческая).
+The DSP algorithms are based on [radiofm](https://github.com/hefo/maxmsp/tree/main/radiofm) © 2025 Henrik Forssell, MIT —
+see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). JUCE is used under its own licence terms. VST is a trademark of
+Steinberg Media Technologies GmbH.

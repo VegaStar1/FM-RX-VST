@@ -1,7 +1,7 @@
 name: build
 
 # На каждый push: тесты ядра, плагин и установщики для Windows и macOS, проверка pluginval, тестовая установка.
-# Push в main (или тег vX.Y.Z): черновик релиза GitHub vX.Y.Z (версия из CMakeLists.txt) с установщиками и PDF.
+# Push в main: черновик релиза GitHub vX.Y.Z (версия из CMakeLists.txt) с установщиками, архивами и PDF.
 # Черновик обновляется при каждом push, пока его не опубликуют; опубликованный релиз не трогается -
 # для следующего выпуска поднимите версию.
 #
@@ -14,7 +14,6 @@ name: build
 on:
   push:
     branches: [ main ]
-    tags: [ 'v*' ]
   pull_request:
   workflow_dispatch:
 
@@ -214,7 +213,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [ core-tests-linux, windows, macos ]
     runs-on: ubuntu-24.04
     permissions:
@@ -232,20 +231,30 @@ jobs:
         run: |
           V=$(sed -n 's/^project(FmRx VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
           TAG="v$V"
-          if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "$TAG" ]]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match CMake version $V"; exit 1
-          fi
           cp "docs/manual/FM RX Manual EN.pdf" "dist/FM-RX-$V-Manual-EN.pdf"
           cp "docs/manual/FM RX Manual RU.pdf" "dist/FM-RX-$V-Manual-RU.pdf"
           ls -la dist
           # Черновики не находятся по тегу - ищем в списке.
-          STATE=$(gh release list --limit 100 --json tagName,isDraft --jq ".[] | select(.tagName==\"$TAG\") | if .isDraft then \"draft\" else \"published\" end")
+          REL=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name==\"$TAG\") | \"\(.id) \(.draft)\"" | head -1)
+          ID=${REL% *}; DRAFT=${REL#* }
+          if [ -n "$REL" ] && [ "$DRAFT" != "true" ]; then
+            echo "::notice::release $TAG is already published - bump the version for a new release"; exit 0
+          fi
           sed "s/@VERSION@/$V/g" packaging/RELEASE_NOTES.md > "$RUNNER_TEMP/notes.md"
-          case "$STATE" in
-            "")        gh release create "$TAG" dist/* --draft --target "$GITHUB_SHA" --title "FM RX $V" --notes-file "$RUNNER_TEMP/notes.md"
-                       echo "::notice::draft release $TAG created" ;;
-            draft)     gh release edit "$TAG" --target "$GITHUB_SHA" --notes-file "$RUNNER_TEMP/notes.md"
-                       gh release upload "$TAG" dist/* --clobber
-                       echo "::notice::draft release $TAG updated" ;;
-            *)         echo "::notice::release $TAG is already published - bump the version for a new release" ;;
-          esac
+          if [ -z "$REL" ]; then
+            gh release create "$TAG" dist/* --draft --target "$GITHUB_SHA" --title "FM RX $V" --notes-file "$RUNNER_TEMP/notes.md"
+            ID=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name==\"$TAG\") | .id" | head -1)
+          else
+            for A in $(gh api "repos/$GITHUB_REPOSITORY/releases/$ID/assets" --jq '.[].id'); do
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$A"
+            done
+            gh release upload "$TAG" dist/*
+          fi
+          # Пока релиз - черновик, его файлы лежат по временному адресу .../download/untagged-XXXX/: ставим в описание
+          # именно его (после публикации workflow release-links заменит адрес на .../download/vX.Y.Z/).
+          URL=$(gh api "repos/$GITHUB_REPOSITORY/releases/$ID/assets" --jq '.[0].browser_download_url')
+          BASE=${URL%/*}
+          sed "s#@BASE@#$BASE#g" "$RUNNER_TEMP/notes.md" > "$RUNNER_TEMP/notes-final.md"
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" -f body="$(cat "$RUNNER_TEMP/notes-final.md")" \
+                 -f target_commitish="$GITHUB_SHA" -f name="FM RX $V" --jq '.html_url'
+          echo "::notice::draft release $TAG ready, links: $BASE"
